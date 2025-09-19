@@ -7,7 +7,7 @@ description = "A simple key-value store"
 
 [lib]
 test = false
-doctest = false
+doctest = true
 
 [[bin]]
 name = "kvs"
