@@ -1,5 +1,7 @@
+use std::env::current_dir;
+
 use clap::{Args, Parser, Subcommand};
-use kvs::KvStore;
+use kvs::{KvStore, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -26,14 +28,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Get(KeyArg),
-    Set {
-        #[command(flatten)]
-        key: KeyArg,
-
-        value: String,
-    },
-    Rm(KeyArg),
+    Get { key: String },
+    Set { key: String, value: String },
+    Rm { key: String },
 }
 
 #[derive(Args, Debug)]
@@ -41,21 +38,30 @@ struct KeyArg {
     key: String,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let mut store = KvStore::open(current_dir()?)?;
+
     match cli.command {
-        Commands::Get(arg) => {
-            eprintln!("unimplemented");
-            std::process::exit(1);
+        Commands::Get { key } => {
+            let value_opt = store.get(key)?;
+            match value_opt {
+                Some(value) => println!("{value}"),
+                None => println!("Key not found"),
+            }
+            std::process::exit(0);
         }
         Commands::Set { key, value } => {
-            eprintln!("unimplemented");
-            std::process::exit(1);
+            store.set(key, value)?;
+            std::process::exit(0);
         }
-        Commands::Rm(arg) => {
-            eprintln!("unimplemented");
-            std::process::exit(1);
-        }
+        Commands::Rm { key } => match store.remove(key) {
+            Ok(()) => std::process::exit(0),
+            Err(_) => {
+                println!("Key not found");
+                std::process::exit(1);
+            }
+        },
     }
 }

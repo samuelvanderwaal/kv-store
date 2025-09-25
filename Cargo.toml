@@ -15,10 +15,13 @@ test = false
 doctest = false
 
 [dependencies]
-bincode = "2.0.1"
+bson = { version = "3.0.0", features = ["serde"] }
 clap = { version ="4.5.47", features = ["derive"] }
 serde = "1.0.225"
+thiserror = "2.0.16"
 
 [dev-dependencies]
 assert_cmd = "2.0.17"
 predicates = "3.1.3"
+tempfile = "3.22.0"
+walkdir = "2.5.0"
