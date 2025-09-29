@@ -37,17 +37,33 @@ pub enum KvError {
 pub struct KvStore {
     path: PathBuf,
     index: HashMap<String, u64>,
+    uncompacted_bytes: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB threshold
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Command {
     Set { key: String, value: String },
     Get { key: String },
     Rm { key: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LogRecord {
+    order: u64,
+    command: Command,
+}
+
 impl KvStore {
     /// Opens the KvStore at the given path.
+    /// ```
+    /// # use kvs::{KvStore, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut db = KvStore::open("./")?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let p: PathBuf = path.into().join("kvstore.log");
         OpenOptions::new()
@@ -59,6 +75,7 @@ impl KvStore {
         let mut store = KvStore {
             path: p,
             index: HashMap::new(),
+            uncompacted_bytes: 0,
         };
 
         // Read the log to update the index.
@@ -69,9 +86,12 @@ impl KvStore {
 
     /// The setter function.
     /// ```
-    /// # use kvs::KvStore;
-    /// # let mut db = KvStore::new();
-    /// db.set("key1".to_string(), "value1".to_string())
+    /// # use kvs::{KvStore, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut db = KvStore::open("./")?;
+    /// db.set("key1".to_string(), "value1".to_string())?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let mut log = OpenOptions::new().append(true).open(&self.path)?;
@@ -84,18 +104,28 @@ impl KvStore {
         };
         let doc = bson::serialize_to_document(&command)?;
         doc.to_writer(&log)?;
+        let end = log.stream_position()?;
         log.flush()?;
 
         self.index.insert(key, start);
+        self.uncompacted_bytes += end - start;
+
+        // Check if compaction is needed
+        if self.uncompacted_bytes > COMPACTION_THRESHOLD {
+            self.compact()?;
+        }
 
         Ok(())
     }
 
     /// The getter function.
     /// ```
-    /// # use kvs::KvStore;
-    /// # let mut db = KvStore::new();
-    /// db.get("key".to_string());
+    /// # use kvs::{KvStore, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut db = KvStore::open("./")?;
+    /// db.get("key".to_string())?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         let mut log = self.load()?;
@@ -118,9 +148,13 @@ impl KvStore {
 
     /// Remove values.
     /// ```
-    /// # use kvs::KvStore;
-    /// # let mut db = KvStore::new();
-    /// db.remove("key1".to_string())
+    /// # use kvs::{KvStore, Result};
+    /// # fn main() -> Result<()> {
+    /// # let mut db = KvStore::open("./")?;
+    /// # db.set("key1".to_string(), "value1".to_string())?;
+    /// db.remove("key1".to_string())?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn remove(&mut self, key: String) -> Result<()> {
         // Load index
@@ -160,6 +194,78 @@ impl KvStore {
             }
         }
 
+        // Get the current file size as initial uncompacted bytes
+        self.uncompacted_bytes = log.metadata()?.len();
+
         Ok(log)
+    }
+
+    fn compact(&mut self) -> Result<()> {
+        let mut log = OpenOptions::new()
+            .read(true)
+            .write(false)
+            .open(&self.path)?;
+
+        // Loop over the file reading each command
+        // Get --> do nothing
+        // Set or Rm --> update in-memory hashmap with latest key/command pair
+        // Write commands back to log
+        // Include nonce value to maintain original command order
+
+        let mut commands: HashMap<String, LogRecord> = HashMap::new();
+        let mut nonce = 0;
+
+        loop {
+            let Ok(doc) = Document::from_reader(&mut log) else {
+                break;
+            };
+
+            let command: Command = bson::deserialize_from_document(doc)?;
+
+            match &command {
+                Command::Get { key: _ } => continue,
+                Command::Set { key, value: _ } => {
+                    commands.insert(
+                        key.clone(),
+                        LogRecord {
+                            order: nonce,
+                            command,
+                        },
+                    );
+                    nonce += 1;
+                }
+                Command::Rm { key } => {
+                    commands.remove(key);
+                }
+            }
+        }
+
+        drop(log);
+
+        let mut log = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+
+        let mut records: Vec<&LogRecord> = commands.values().collect();
+        records.sort();
+
+        self.index.clear();
+        for record in records {
+            let start = log.stream_position()?;
+            let doc = bson::serialize_to_document(&record.command)?;
+            doc.to_writer(&log)?;
+
+            // Rebuild the index with new offsets
+            if let Command::Set { key, value: _ } = &record.command {
+                self.index.insert(key.clone(), start);
+            }
+        }
+
+        log.flush()?;
+        self.uncompacted_bytes = 0;
+
+        Ok(())
     }
 }
