@@ -1,10 +1,12 @@
-use assert_cmd::prelude::*;
-use kvs::{KvStore, Result};
-use predicates::ord::eq;
-use predicates::str::{PredicateStrExt, contains, is_empty};
-use std::process::Command;
-use tempfile::TempDir;
-use walkdir::WalkDir;
+use {
+    assert_cmd::prelude::*,
+    kvs::{KvStore, Result},
+    predicates::ord::eq,
+    predicates::str::{PredicateStrExt, contains, is_empty},
+    std::process::Command,
+    tempfile::TempDir,
+    walkdir::WalkDir,
+};
 
 // `kvs` with no args should exit with a non-zero code.
 #[test]

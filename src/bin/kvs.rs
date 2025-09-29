@@ -1,7 +1,9 @@
 use std::env::current_dir;
 
-use clap::{Args, Parser, Subcommand};
-use kvs::{KvStore, Result};
+use {
+    clap::{Args, Parser, Subcommand},
+    kvs::{KvStore, Result},
+};
 
 const HELP: &str = "\
 {before-help}{name} {version}

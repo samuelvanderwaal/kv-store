@@ -10,9 +10,8 @@ use std::{
     path::PathBuf,
 };
 
-use bson::Document;
-
 use {
+    bson::Document,
     serde::{Deserialize, Serialize},
     thiserror::Error,
 };
