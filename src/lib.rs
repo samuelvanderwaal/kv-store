@@ -6,7 +6,7 @@
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{self, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 
@@ -37,6 +37,7 @@ pub struct KvStore {
     path: PathBuf,
     index: HashMap<String, u64>,
     uncompacted_bytes: u64,
+    log_file: BufWriter<File>,
 }
 
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB threshold
@@ -65,7 +66,7 @@ impl KvStore {
     /// ```
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let p: PathBuf = path.into().join("kvstore.log");
-        OpenOptions::new()
+        let file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
@@ -75,6 +76,7 @@ impl KvStore {
             path: p,
             index: HashMap::new(),
             uncompacted_bytes: 0,
+            log_file: BufWriter::new(file),
         };
 
         // Read the log to update the index.
@@ -93,18 +95,15 @@ impl KvStore {
     /// # }
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let mut log = OpenOptions::new().append(true).open(&self.path)?;
-
-        let start = log.stream_position()?;
+        let start = self.log_file.stream_position()?;
 
         let command = Command::Set {
             key: key.clone(),
             value,
         };
         let doc = bson::serialize_to_document(&command)?;
-        doc.to_writer(&log)?;
-        let end = log.stream_position()?;
-        log.flush()?;
+        doc.to_writer(&mut self.log_file)?;
+        let end = self.log_file.stream_position()?;
 
         self.index.insert(key, start);
         self.uncompacted_bytes += end - start;
@@ -127,13 +126,17 @@ impl KvStore {
     /// # }
     /// ```
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        let mut log = self.load()?;
+        self.load()?;
 
         let pointer = self.index.get(&key);
 
         if let Some(p) = pointer {
-            log.seek(SeekFrom::Start(*p))?;
-            let doc = Document::from_reader(&log)?;
+            // Create read file handle (load() clears it to avoid conflicts)
+            let file = OpenOptions::new().read(true).open(&self.path)?;
+            let mut read_file = BufReader::new(file);
+
+            read_file.seek(SeekFrom::Start(*p))?;
+            let doc = Document::from_reader(&mut read_file)?;
             let command: Command = bson::deserialize_from_document(doc)?;
             match command {
                 Command::Set { key: _, value } => Ok(Some(value)),
@@ -161,17 +164,19 @@ impl KvStore {
 
         match self.index.remove(&key) {
             Some(_) => {
-                let log = OpenOptions::new().append(true).open(&self.path)?;
                 let command = Command::Rm { key };
                 let doc = bson::serialize_to_document(&command)?;
-                doc.to_writer(&log)?;
+                doc.to_writer(&mut self.log_file)?;
                 Ok(())
             }
             None => Err(KvError::Remove),
         }
     }
 
-    fn load(&mut self) -> Result<File> {
+    fn load(&mut self) -> Result<()> {
+        // Flush any pending writes before reading
+        self.log_file.flush()?;
+
         let mut log = OpenOptions::new().read(true).open(&self.path)?;
 
         loop {
@@ -196,7 +201,7 @@ impl KvStore {
         // Get the current file size as initial uncompacted bytes
         self.uncompacted_bytes = log.metadata()?.len();
 
-        Ok(log)
+        Ok(())
     }
 
     fn compact(&mut self) -> Result<()> {
