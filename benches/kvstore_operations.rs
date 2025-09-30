@@ -161,8 +161,8 @@ pub fn remove_benchmark(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default()
-        .sample_size(500)
-        .measurement_time(Duration::from_secs(5));
+        .sample_size(250)
+        .measurement_time(Duration::from_secs(3));
     targets = insert_benchmark, get_benchmark, remove_benchmark
 );
 criterion_main!(benches);
