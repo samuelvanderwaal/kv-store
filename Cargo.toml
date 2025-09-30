@@ -28,5 +28,13 @@ tempfile = "3.22.0"
 walkdir = "2.5.0"
 
 [[bench]]
-name = "kvstore_operations"
+name = "set_operations"
+harness = false
+
+[[bench]]
+name = "get_operations"
+harness = false
+
+[[bench]]
+name = "remove_operations"
 harness = false
