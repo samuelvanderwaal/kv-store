@@ -14,6 +14,8 @@ bson = { version = "3.0.0", features = ["serde"] }
 clap = { version = "4.5.47", features = ["derive"] }
 serde = "1.0.225"
 thiserror = "2.0.16"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [dev-dependencies]
 assert_cmd = "0.11"

@@ -1,11 +1,12 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use kvs::KvError;
-
 use {
-    clap::{Args, Parser, Subcommand},
-    kvs::{KvStore, Result},
+    clap::Parser,
+    tracing::info,
+    tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt},
 };
+
+use kvs::{KvError, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -54,8 +55,25 @@ impl FromStr for EngineName {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    println!("addr: {:?}", cli.addr);
-    println!("engine: {:?}", cli.engine);
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    // Write to the terminal with pretty formatting.
+    let terminal_layer = tracing_subscriber::fmt::layer()
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_ids(false) // enable later for multi-threaded support
+        .pretty();
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(terminal_layer)
+        .init();
+
+    info!("version {}", env!("CARGO_PKG_VERSION"));
+
+    info!("Starting server on {}", cli.addr);
+    info!("Engine: {:?}", cli.engine);
 
     Ok(())
 }
