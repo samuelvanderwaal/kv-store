@@ -1,8 +1,8 @@
-use std::env::current_dir;
+use std::net::{SocketAddr, TcpStream};
 
 use {
-    clap::{Args, Parser, Subcommand},
-    kvs::{KvStore, Result},
+    clap::{Parser, Subcommand},
+    kvs::Result,
 };
 
 const HELP: &str = "\
@@ -24,6 +24,9 @@ const HELP: &str = "\
     help_template = HELP
 )]
 struct Cli {
+    #[arg(short, long)]
+    addr: SocketAddr,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -35,35 +38,20 @@ enum Commands {
     Rm { key: String },
 }
 
-#[derive(Args, Debug)]
-struct KeyArg {
-    key: String,
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut store = KvStore::open(current_dir()?)?;
+    let _stream = TcpStream::connect(cli.addr);
 
     match cli.command {
-        Commands::Get { key } => {
-            let value_opt = store.get(key)?;
-            match value_opt {
-                Some(value) => println!("{value}"),
-                None => println!("Key not found"),
-            }
+        Commands::Get { key: _ } => {
             std::process::exit(0);
         }
-        Commands::Set { key, value } => {
-            store.set(key, value)?;
+        Commands::Set { key: _, value: _ } => {
             std::process::exit(0);
         }
-        Commands::Rm { key } => match store.remove(key) {
-            Ok(()) => std::process::exit(0),
-            Err(_) => {
-                println!("Key not found");
-                std::process::exit(1);
-            }
-        },
+        Commands::Rm { key: _ } => {
+            std::process::exit(1);
+        }
     }
 }

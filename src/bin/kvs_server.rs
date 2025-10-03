@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{
+    io::Read,
+    net::{SocketAddr, TcpListener, TcpStream},
+    str::FromStr,
+};
 
 use {
     clap::Parser,
@@ -55,6 +59,31 @@ impl FromStr for EngineName {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    init_logging();
+
+    info!("version {}", env!("CARGO_PKG_VERSION"));
+    info!("Engine: {:?}", cli.engine);
+
+    let listener = TcpListener::bind(cli.addr)?;
+
+    info!("Listening on {}", cli.addr);
+
+    for stream in listener.incoming() {
+        handle_connection(stream?)?;
+    }
+
+    Ok(())
+}
+
+fn handle_connection(mut stream: TcpStream) -> Result<()> {
+    let mut data: Vec<u8> = vec![];
+    stream.read(&mut data)?;
+    info!("read {} bytes", data.len());
+
+    Ok(())
+}
+
+fn init_logging() {
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
@@ -69,11 +98,4 @@ fn main() -> Result<()> {
         .with(env_filter)
         .with(terminal_layer)
         .init();
-
-    info!("version {}", env!("CARGO_PKG_VERSION"));
-
-    info!("Starting server on {}", cli.addr);
-    info!("Engine: {:?}", cli.engine);
-
-    Ok(())
 }
