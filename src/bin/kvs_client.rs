@@ -43,12 +43,12 @@ enum Commands {
     Rm { key: String },
 }
 
-impl Into<KvCommand> for Commands {
-    fn into(self) -> KvCommand {
-        match self {
-            Self::Get { key } => KvCommand::Get { key },
-            Self::Set { key, value } => KvCommand::Set { key, value },
-            Self::Rm { key } => KvCommand::Rm { key },
+impl From<Commands> for KvCommand {
+    fn from(val: Commands) -> Self {
+        match val {
+            Commands::Get { key } => KvCommand::Get { key },
+            Commands::Set { key, value } => KvCommand::Set { key, value },
+            Commands::Rm { key } => KvCommand::Rm { key },
         }
     }
 }
