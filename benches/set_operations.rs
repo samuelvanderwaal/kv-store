@@ -5,7 +5,7 @@ use {
     tempfile::TempDir,
 };
 
-use kvs::KvStore;
+use kvs::{KvEngine, KvStore};
 
 mod common;
 

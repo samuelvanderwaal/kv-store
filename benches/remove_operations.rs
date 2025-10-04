@@ -5,7 +5,7 @@ use {
     tempfile::TempDir,
 };
 
-use kvs::KvStore;
+use kvs::{KvEngine, KvStore};
 
 mod common;
 
@@ -24,7 +24,7 @@ pub fn remove_benchmark(c: &mut Criterion) {
             }
 
             // Remove a key
-            store.remove("key_50".to_string())
+            store.rm("key_50".to_string())
         })
     });
 
@@ -34,7 +34,7 @@ pub fn remove_benchmark(c: &mut Criterion) {
             // Set the key first
             store.set("key1".to_string(), "value1".to_string()).unwrap();
             // Then remove it
-            store.remove("key1".to_string())
+            store.rm("key1".to_string())
         })
     });
 
@@ -44,7 +44,7 @@ pub fn remove_benchmark(c: &mut Criterion) {
         b.iter(|| {
             let key = format!("missing_key_{}", counter);
             counter += 1;
-            store.remove(key)
+            store.rm(key)
         })
     });
 
