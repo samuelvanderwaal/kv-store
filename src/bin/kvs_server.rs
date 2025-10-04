@@ -95,6 +95,7 @@ fn init_logging() {
 
     // Write to the terminal with pretty formatting.
     let terminal_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
         .with_file(true)
         .with_line_number(true)
         .with_thread_ids(false) // enable later for multi-threaded support

@@ -12,6 +12,14 @@ bincode = []
 test = false
 doctest = true
 
+[[bin]]
+name = "kvs-client"
+path = "src/bin/kvs_client.rs"
+
+[[bin]]
+name = "kvs-server"
+path = "src/bin/kvs_server.rs"
+
 [dependencies]
 bincode = {version = "2.0.1", features = ["serde"]}
 bson = { version = "3.0.0", features = ["serde"] }
