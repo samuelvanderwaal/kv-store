@@ -1,16 +1,20 @@
 use std::{
+    env::home_dir,
+    fs::{self, File},
     io::Read,
     net::{SocketAddr, TcpListener, TcpStream},
-    str::FromStr,
+    path::{Path, PathBuf},
 };
 
 use {
     clap::Parser,
+    config::Config,
+    serde::Deserialize,
     tracing::info,
     tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt},
 };
 
-use kvs::{KvError, Result};
+use kvs::{EngineType, KvEngine, KvError, KvStore, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -35,31 +39,59 @@ struct Cli {
     addr: SocketAddr,
 
     #[arg(short, long)]
-    engine: EngineName,
+    engine: EngineType,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum EngineName {
-    Kvs,
-    Sled,
+fn get_engine_type(p: &Path) -> Result<Option<EngineType>> {
+    let engine_file = p.join(".engine.lock");
+    if !engine_file.exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(serde_json::from_reader(File::open(engine_file)?)?))
 }
 
-impl FromStr for EngineName {
-    type Err = KvError;
+fn set_engine_type(p: &Path, engine: EngineType) -> Result<()> {
+    let engine_file = p.join(".engine.lock");
+    fs::write(engine_file, serde_json::to_string(&engine)?)?;
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        match s.to_lowercase().as_ref() {
-            "kvs" | "kvstore" => Ok(EngineName::Kvs),
-            "sled" | "sld" => Ok(EngineName::Sled),
-            _ => Err(KvError::InvalidEngineName),
+    Ok(())
+}
+
+/// Opens the appropriate engine based on what's persisted, or creates new with specified type
+pub fn open_engine(path: &Path, requested_engine: EngineType) -> Result<Box<dyn KvEngine>> {
+    match get_engine_type(path)? {
+        Some(existing_engine) if existing_engine != requested_engine => {
+            return Err(KvError::WrongEngine {
+                requested: requested_engine,
+                existing: existing_engine,
+            });
         }
+        None => {
+            // First time, persist the engine choice
+            set_engine_type(path, requested_engine.clone())?;
+        }
+        _ => {} // Engine types match, proceed
+    }
+
+    match requested_engine {
+        EngineType::Kvs => Ok(Box::new(KvStore::open(path)?)),
+        EngineType::Sled => {
+            // Ok(Box::new(SledKvEngine::open(path)?))
+            todo!("Sled engine not yet implemented")
+        }
+        _ => panic!("unimplemented engine type!"),
     }
 }
 
 fn main() -> Result<()> {
+    init_logging();
+
+    let settings = Settings::new()?;
+
     let cli = Cli::parse();
 
-    init_logging();
+    let engine = open_engine(&settings.storage_path, cli.engine)?;
 
     info!("version {}", env!("CARGO_PKG_VERSION"));
     info!("Engine: {:?}", cli.engine);
@@ -69,22 +101,8 @@ fn main() -> Result<()> {
     info!("Listening on {}", cli.addr);
 
     for stream in listener.incoming() {
-        handle_connection(stream?)?;
+        handle_connection(stream?, &engine)?;
     }
-
-    Ok(())
-}
-
-fn handle_connection(mut stream: TcpStream) -> Result<()> {
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes)?;
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    // Vec w/ len and capacity of `len`.
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data)?;
-
-    info!("read {} bytes", data.len());
 
     Ok(())
 }
@@ -105,4 +123,41 @@ fn init_logging() {
         .with(env_filter)
         .with(terminal_layer)
         .init();
+}
+
+#[derive(Deserialize)]
+struct Settings {
+    storage_path: PathBuf,
+}
+
+impl Settings {
+    fn new() -> Result<Settings> {
+        let path = home_dir()
+            .expect("failed to set platform home dir")
+            .join(".kvsrc");
+
+        let config = Config::builder()
+            .add_source(config::File::with_name(
+                path.to_str().expect("couldn't convert path to str"),
+            ))
+            .build()?;
+
+        Ok(config.try_deserialize()?)
+    }
+}
+
+fn handle_connection(mut stream: TcpStream, engine: &Box<dyn KvEngine>) -> Result<()> {
+    let mut len_bytes = [0u8; 4];
+    stream.read_exact(&mut len_bytes)?;
+    let len = u32::from_be_bytes(len_bytes) as usize;
+
+    // Vec w/ len and capacity of `len`.
+    let mut data = vec![0u8; len];
+    stream.read_exact(&mut data)?;
+
+    info!("read {} bytes", data.len());
+
+    // implement commands using engine trait methods
+
+    Ok(())
 }
