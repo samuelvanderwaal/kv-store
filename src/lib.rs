@@ -22,18 +22,31 @@ pub type Result<T> = std::result::Result<T, KvError>;
 /// Custom error for the library to represent the various types of failures.
 #[derive(Debug, Error)]
 pub enum KvError {
-    #[error("failed to open datastore at path")]
-    Open(#[from] io::Error),
-    #[error("remove error")]
-    Remove,
-    #[error("bson error")]
-    Bson(#[from] bson::error::Error),
-    #[error("failed to insert into index")]
-    IndexInsertion,
+    // Config
     #[error("invalid engine name")]
     InvalidEngineName,
     #[error("invalid addr")]
     InvalidAddr,
+
+    // IO
+    #[error("failed to open datastore at path")]
+    Open(#[from] io::Error),
+    #[error("remove error")]
+    Remove,
+    #[error("network message is too large")]
+    MessageTooLarge,
+
+    // Encoding
+    #[error("bson error")]
+    Bson(#[from] bson::error::Error),
+    #[error("bincode encoding error")]
+    BincodeEncode(#[from] bincode::error::EncodeError),
+    #[error("bincode decoding error")]
+    BincodeDecoding(#[from] bincode::error::DecodeError),
+
+    // Index
+    #[error("failed to insert into index")]
+    IndexInsertion,
 }
 
 ///The main data structure that stores the values.
@@ -50,7 +63,8 @@ pub struct KvsEngine;
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB threshold
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Command {
+#[cfg_attr(feature = "bincode", derive(bincode::{Encode, Decode}))]
+pub enum KvCommand {
     Set { key: String, value: String },
     Get { key: String },
     Rm { key: String },
@@ -59,7 +73,7 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct LogRecord {
     order: u64,
-    command: Command,
+    command: KvCommand,
 }
 
 impl KvStore {
@@ -107,7 +121,7 @@ impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let start = self.log_file.stream_position()?;
 
-        let command = Command::Set {
+        let command = KvCommand::Set {
             key: key.clone(),
             value,
         };
@@ -144,11 +158,11 @@ impl KvStore {
         if let Some(p) = pointer {
             self.read_file.seek(SeekFrom::Start(*p))?;
             let doc = Document::from_reader(&mut self.read_file)?;
-            let command: Command = bson::deserialize_from_document(doc)?;
+            let command: KvCommand = bson::deserialize_from_document(doc)?;
             match command {
-                Command::Set { key: _, value } => Ok(Some(value)),
-                Command::Get { key: _ } => panic!("offset to invalid command!"),
-                Command::Rm { key: _ } => panic!("offset to invalid command!"),
+                KvCommand::Set { key: _, value } => Ok(Some(value)),
+                KvCommand::Get { key: _ } => panic!("offset to invalid command!"),
+                KvCommand::Rm { key: _ } => panic!("offset to invalid command!"),
             }
         } else {
             Ok(None)
@@ -171,7 +185,7 @@ impl KvStore {
 
         match self.index.remove(&key) {
             Some(_) => {
-                let command = Command::Rm { key };
+                let command = KvCommand::Rm { key };
                 let doc = bson::serialize_to_document(&command)?;
                 doc.to_writer(&mut self.log_file)?;
                 Ok(())
@@ -193,14 +207,14 @@ impl KvStore {
                 break;
             };
 
-            let command: Command = bson::deserialize_from_document(doc)?;
+            let command: KvCommand = bson::deserialize_from_document(doc)?;
 
             match command {
-                Command::Set { key, value: _ } => {
+                KvCommand::Set { key, value: _ } => {
                     self.index.insert(key, start);
                 }
-                Command::Get { key: _ } => (),
-                Command::Rm { key } => {
+                KvCommand::Get { key: _ } => (),
+                KvCommand::Rm { key } => {
                     self.index.remove(&key);
                 }
             }
@@ -232,11 +246,11 @@ impl KvStore {
                 break;
             };
 
-            let command: Command = bson::deserialize_from_document(doc)?;
+            let command: KvCommand = bson::deserialize_from_document(doc)?;
 
             match &command {
-                Command::Get { key: _ } => continue,
-                Command::Set { key, value: _ } => {
+                KvCommand::Get { key: _ } => continue,
+                KvCommand::Set { key, value: _ } => {
                     commands.insert(
                         key.clone(),
                         LogRecord {
@@ -246,7 +260,7 @@ impl KvStore {
                     );
                     nonce += 1;
                 }
-                Command::Rm { key } => {
+                KvCommand::Rm { key } => {
                     commands.remove(key);
                 }
             }
@@ -270,7 +284,7 @@ impl KvStore {
             doc.to_writer(&log)?;
 
             // Rebuild the index with new offsets
-            if let Command::Set { key, value: _ } = &record.command {
+            if let KvCommand::Set { key, value: _ } = &record.command {
                 self.index.insert(key.clone(), start);
             }
         }

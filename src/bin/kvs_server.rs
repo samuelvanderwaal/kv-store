@@ -76,8 +76,14 @@ fn main() -> Result<()> {
 }
 
 fn handle_connection(mut stream: TcpStream) -> Result<()> {
-    let mut data: Vec<u8> = vec![];
-    stream.read(&mut data)?;
+    let mut len_bytes = [0u8; 4];
+    stream.read_exact(&mut len_bytes)?;
+    let len = u32::from_be_bytes(len_bytes) as usize;
+
+    // Vec w/ len and capacity of `len`.
+    let mut data = vec![0u8; len];
+    stream.read_exact(&mut data)?;
+
     info!("read {} bytes", data.len());
 
     Ok(())

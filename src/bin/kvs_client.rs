@@ -1,9 +1,14 @@
-use std::net::{SocketAddr, TcpStream};
+use std::{
+    io::Write,
+    net::{SocketAddr, TcpStream},
+};
 
 use {
+    bincode::config::standard,
     clap::{Parser, Subcommand},
-    kvs::Result,
 };
+
+use kvs::{KvCommand, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -38,20 +43,27 @@ enum Commands {
     Rm { key: String },
 }
 
+impl Into<KvCommand> for Commands {
+    fn into(self) -> KvCommand {
+        match self {
+            Self::Get { key } => KvCommand::Get { key },
+            Self::Set { key, value } => KvCommand::Set { key, value },
+            Self::Rm { key } => KvCommand::Rm { key },
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let _stream = TcpStream::connect(cli.addr);
+    let mut stream = TcpStream::connect(cli.addr)?;
+    let kv_command: KvCommand = cli.command.into();
+    let bytes = bincode::serde::encode_to_vec(&kv_command, standard())?;
+    let len = bytes.len();
 
-    match cli.command {
-        Commands::Get { key: _ } => {
-            std::process::exit(0);
-        }
-        Commands::Set { key: _, value: _ } => {
-            std::process::exit(0);
-        }
-        Commands::Rm { key: _ } => {
-            std::process::exit(1);
-        }
-    }
+    stream.write_all(&len.to_be_bytes())?;
+    stream.write_all(&bytes)?;
+    stream.flush()?;
+
+    Ok(())
 }
