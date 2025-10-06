@@ -6,7 +6,7 @@
 mod engine;
 mod error;
 
-pub use engine::{EngineType, KvCommand, KvEngine, KvSled, KvStore};
+pub use engine::{EngineType, KvCommand, KvEngine, KvResponse, KvSled, KvStore};
 pub use error::KvError;
 
 /// Aliased result using the library's custom error.

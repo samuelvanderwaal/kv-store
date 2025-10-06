@@ -157,6 +157,7 @@ fn cli_log_configuration() {
     let stderr_path = temp_dir.path().join("stderr");
     let mut cmd = Command::cargo_bin("kvs-server").unwrap();
     let mut child = cmd
+        .env("KVS_STORAGE_PATH", temp_dir.path())
         .args(&["--engine", "kvs", "--addr", "127.0.0.1:4001"])
         .current_dir(&temp_dir)
         .stderr(File::create(&stderr_path).unwrap())
@@ -178,6 +179,7 @@ fn cli_wrong_engine() {
         let temp_dir = TempDir::new().unwrap();
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
         let mut child = cmd
+            .env("KVS_STORAGE_PATH", temp_dir.path())
             .args(&["--engine", "sled", "--addr", "127.0.0.1:4002"])
             .current_dir(&temp_dir)
             .spawn()
@@ -186,7 +188,8 @@ fn cli_wrong_engine() {
         child.kill().expect("server exited before killed");
 
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
-        cmd.args(&["--engine", "kvs", "--addr", "127.0.0.1:4003"])
+        cmd.env("KVS_STORAGE_PATH", temp_dir.path())
+            .args(&["--engine", "kvs", "--addr", "127.0.0.1:4003"])
             .current_dir(&temp_dir)
             .assert()
             .failure();
@@ -197,6 +200,7 @@ fn cli_wrong_engine() {
         let temp_dir = TempDir::new().unwrap();
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
         let mut child = cmd
+            .env("KVS_STORAGE_PATH", temp_dir.path())
             .args(&["--engine", "kvs", "--addr", "127.0.0.1:4002"])
             .current_dir(&temp_dir)
             .spawn()
@@ -205,7 +209,8 @@ fn cli_wrong_engine() {
         child.kill().expect("server exited before killed");
 
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
-        cmd.args(&["--engine", "sled", "--addr", "127.0.0.1:4003"])
+        cmd.env("KVS_STORAGE_PATH", temp_dir.path())
+            .args(&["--engine", "sled", "--addr", "127.0.0.1:4003"])
             .current_dir(&temp_dir)
             .assert()
             .failure();
@@ -214,9 +219,12 @@ fn cli_wrong_engine() {
 
 fn cli_access_server(engine: &str, addr: &str) {
     let (sender, receiver) = mpsc::sync_channel(0);
+
     let temp_dir = TempDir::new().unwrap();
+
     let mut server = Command::cargo_bin("kvs-server").unwrap();
     let mut child = server
+        .env("KVS_STORAGE_PATH", temp_dir.path())
         .args(&["--engine", engine, "--addr", addr])
         .current_dir(&temp_dir)
         .spawn()
@@ -298,6 +306,7 @@ fn cli_access_server(engine: &str, addr: &str) {
     let (sender, receiver) = mpsc::sync_channel(0);
     let mut server = Command::cargo_bin("kvs-server").unwrap();
     let mut child = server
+        .env("KVS_STORAGE_PATH", temp_dir.path())
         .args(&["--engine", engine, "--addr", addr])
         .current_dir(&temp_dir)
         .spawn()

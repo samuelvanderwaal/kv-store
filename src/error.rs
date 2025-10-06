@@ -23,7 +23,7 @@ pub enum KvError {
     // IO
     #[error("failed to open file at path")]
     Open(#[from] io::Error),
-    #[error("remove error")]
+    #[error("Key not found")]
     Remove,
     #[error("failed to deserialize")]
     Deserialize(#[from] serde_json::Error),

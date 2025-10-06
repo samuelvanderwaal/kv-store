@@ -15,8 +15,18 @@ use crate::{KvError, Result};
 
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024; // 1MB threshold
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "bincode", derive(bincode::{Encode, Decode}))]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    bincode::Encode,
+    bincode::Decode,
+)]
 pub enum KvCommand {
     Set { key: String, value: String },
     Get { key: String },
@@ -169,6 +179,18 @@ impl KvStore {
         log.flush()?;
         self.uncompacted_bytes = 0;
 
+        // Update file handles after compaction
+        drop(log);
+        let write_file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .append(true)
+            .open(&self.path)?;
+        let read_file = OpenOptions::new().read(true).open(&self.path)?;
+
+        self.log_file = BufWriter::new(write_file);
+        self.read_file = BufReader::new(read_file);
+
         Ok(())
     }
 }
@@ -253,6 +275,7 @@ impl KvEngine for KvStore {
                 let command = KvCommand::Rm { key };
                 let doc = bson::serialize_to_document(&command)?;
                 doc.to_writer(&mut self.log_file)?;
+                self.log_file.flush()?;
                 Ok(())
             }
             None => Err(KvError::Remove),

@@ -9,6 +9,15 @@ use std::str::FromStr;
 
 use crate::{KvError, Result};
 
+/// Response from the server after processing a command
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum KvResponse {
+    /// Successful operation with optional value (for Get commands)
+    Ok(Option<String>),
+    /// Error occurred
+    Err(String),
+}
+
 pub trait KvEngine {
     fn get(&mut self, key: String) -> Result<Option<String>>;
 
