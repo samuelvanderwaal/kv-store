@@ -59,11 +59,14 @@ impl KvStore {
     /// ```
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let p: PathBuf = path.into().join("kvstore.log");
-        let write_file = OpenOptions::new()
+        let mut write_file = OpenOptions::new()
             .create(true)
             .truncate(false)
             .write(true)
             .open(&p)?;
+
+        // Seek to the end of the file for appending
+        write_file.seek(SeekFrom::End(0))?;
 
         let read_file = OpenOptions::new().read(true).open(&p)?;
 
@@ -219,6 +222,9 @@ impl KvEngine for KvStore {
         self.index.insert(key, start);
         self.uncompacted_bytes += end - start;
 
+        // Flush to ensure data is persisted
+        self.log_file.flush()?;
+
         // Check if compaction is needed
         if self.uncompacted_bytes > COMPACTION_THRESHOLD {
             self.compact()?;
@@ -269,9 +275,6 @@ impl KvEngine for KvStore {
     /// # }
     /// ```
     fn rm(&mut self, key: String) -> Result<()> {
-        // Load index
-        self.load()?;
-
         match self.index.remove(&key) {
             Some(_) => {
                 let command = KvCommand::Rm { key };
