@@ -1,54 +1,68 @@
 use std::collections::HashMap;
 
 use {
-    criterion::{Criterion, criterion_group, criterion_main},
+    criterion::{BenchmarkId, Criterion, criterion_group, criterion_main},
     tempfile::TempDir,
 };
-
-use kvs::{KvEngine, KvStore};
 
 mod common;
 
 pub fn remove_benchmark(c: &mut Criterion) {
-    let temp_dir = TempDir::new().expect("unable to create temporary working directory");
-    let mut store = KvStore::open(temp_dir.path()).unwrap();
+    let engines = vec!["kvs", "sled"];
 
-    // Test 1: Remove existing keys
-    c.bench_function("remove_existing_keys", |b| {
-        b.iter(|| {
-            // Re-populate store for each iteration
-            for i in 0..100 {
-                let key = format!("key_{}", i);
-                let value = format!("value_{}", i);
-                store.set(key, value).unwrap();
-            }
+    for engine_name in engines {
+        let temp_dir = TempDir::new().expect("unable to create temporary working directory");
+        let mut store = common::create_engine(engine_name, temp_dir.path());
 
-            // Remove a key
-            store.rm("key_50".to_string())
-        })
-    });
+        // Test 1: Remove existing keys
+        c.bench_with_input(
+            BenchmarkId::new("remove_existing_keys", engine_name),
+            &engine_name,
+            |b, _| {
+                b.iter(|| {
+                    // Re-populate store for each iteration
+                    for i in 0..100 {
+                        let key = format!("key_{}", i);
+                        let value = format!("value_{}", i);
+                        store.set(key, value).unwrap();
+                    }
 
-    // Test 2: Remove same key repeatedly (overwrite scenario)
-    c.bench_function("remove_same_key", |b| {
-        b.iter(|| {
-            // Set the key first
-            store.set("key1".to_string(), "value1".to_string()).unwrap();
-            // Then remove it
-            store.rm("key1".to_string())
-        })
-    });
+                    // Remove a key
+                    store.rm("key_50".to_string())
+                })
+            },
+        );
 
-    // Test 3: Remove non-existent keys (error case)
-    c.bench_function("remove_missing_keys", |b| {
-        let mut counter = 0;
-        b.iter(|| {
-            let key = format!("missing_key_{}", counter);
-            counter += 1;
-            store.rm(key)
-        })
-    });
+        // Test 2: Remove same key repeatedly (overwrite scenario)
+        c.bench_with_input(
+            BenchmarkId::new("remove_same_key", engine_name),
+            &engine_name,
+            |b, _| {
+                b.iter(|| {
+                    // Set the key first
+                    store.set("key1".to_string(), "value1".to_string()).unwrap();
+                    // Then remove it
+                    store.rm("key1".to_string())
+                })
+            },
+        );
 
-    // Test 4: Memory-only HashMap for comparison
+        // Test 3: Remove non-existent keys (error case)
+        c.bench_with_input(
+            BenchmarkId::new("remove_missing_keys", engine_name),
+            &engine_name,
+            |b, _| {
+                let mut counter = 0;
+                b.iter(|| {
+                    let key = format!("missing_key_{}", counter);
+                    counter += 1;
+                    store.rm(key)
+                })
+            },
+        );
+    }
+
+    // Test 4: Memory-only HashMap for comparison (baseline)
     c.bench_function("memory_only_hashmap_remove", |b| {
         b.iter(|| {
             let mut map = HashMap::new();
