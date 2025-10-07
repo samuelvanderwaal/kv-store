@@ -52,9 +52,11 @@ pub fn remove_benchmark(c: &mut Criterion) {
             BenchmarkId::new("remove_missing_keys", engine_name),
             &engine_name,
             |b, _| {
+                // Pre-allocate keys to avoid measuring format!() overhead
+                let keys: Vec<String> = (0..100000).map(|i| format!("missing_key_{}", i)).collect();
                 let mut counter = 0;
                 b.iter(|| {
-                    let key = format!("missing_key_{}", counter);
+                    let key = keys[counter % 100000].clone();
                     counter += 1;
                     store.rm(key)
                 })

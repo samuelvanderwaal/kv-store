@@ -222,9 +222,6 @@ impl KvEngine for KvStore {
         self.index.insert(key, start);
         self.uncompacted_bytes += end - start;
 
-        // Flush to ensure data is persisted
-        self.log_file.flush()?;
-
         // Check if compaction is needed
         if self.uncompacted_bytes > COMPACTION_THRESHOLD {
             self.compact()?;

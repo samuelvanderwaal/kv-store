@@ -19,10 +19,13 @@ pub fn set_benchmark(c: &mut Criterion) {
             BenchmarkId::new("set_unique_keys", engine_name),
             &engine_name,
             |b, _| {
+                // Pre-allocate keys and values to avoid measuring format!() overhead
+                let keys: Vec<String> = (0..100000).map(|i| format!("key_{}", i)).collect();
+                let values: Vec<String> = (0..100000).map(|i| format!("value_{}", i)).collect();
                 let mut counter = 0;
                 b.iter(|| {
-                    let key = format!("key_{}", counter);
-                    let value = format!("value_{}", counter);
+                    let key = keys[counter % 100000].clone();
+                    let value = values[counter % 100000].clone();
                     counter += 1;
                     store.set(key, value)
                 })
@@ -41,10 +44,13 @@ pub fn set_benchmark(c: &mut Criterion) {
             BenchmarkId::new("set_mixed_operations", engine_name),
             &engine_name,
             |b, _| {
+                // Pre-allocate keys and values to avoid measuring format!() overhead
+                let keys: Vec<String> = (0..100).map(|i| format!("key_{}", i)).collect();
+                let values: Vec<String> = (0..100000).map(|i| format!("value_{}", i)).collect();
                 let mut counter = 0;
                 b.iter(|| {
-                    let key = format!("key_{}", counter % 100); // Cycle through 100 keys
-                    let value = format!("value_{}", counter);
+                    let key = keys[counter % 100].clone(); // Cycle through 100 keys
+                    let value = values[counter % 100000].clone();
                     counter += 1;
                     store.set(key, value)
                 })
@@ -55,10 +61,13 @@ pub fn set_benchmark(c: &mut Criterion) {
     // Test 4: Memory-only HashMap for comparison (baseline)
     c.bench_function("memory_only_hashmap_set", |b| {
         let mut map = HashMap::new();
+        // Pre-allocate keys and values to avoid measuring format!() overhead
+        let keys: Vec<String> = (0..100000).map(|i| format!("key_{}", i)).collect();
+        let values: Vec<String> = (0..100000).map(|i| format!("value_{}", i)).collect();
         let mut counter = 0;
         b.iter(|| {
-            let key = format!("key_{}", counter);
-            let value = format!("value_{}", counter);
+            let key = keys[counter % 100000].clone();
+            let value = values[counter % 100000].clone();
             counter += 1;
             map.insert(key, value);
         })

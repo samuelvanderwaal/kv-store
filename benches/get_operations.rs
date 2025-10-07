@@ -26,9 +26,11 @@ pub fn get_benchmark(c: &mut Criterion) {
             BenchmarkId::new("get_existing_keys", engine_name),
             &engine_name,
             |b, _| {
+                // Pre-allocate keys to avoid measuring format!() overhead
+                let keys: Vec<String> = (0..1000).map(|i| format!("key_{}", i)).collect();
                 let mut counter = 0;
                 b.iter(|| {
-                    let key = format!("key_{}", counter % 1000);
+                    let key = keys[counter % 1000].clone();
                     counter += 1;
                     store.get(key)
                 })
@@ -47,9 +49,11 @@ pub fn get_benchmark(c: &mut Criterion) {
             BenchmarkId::new("get_missing_keys", engine_name),
             &engine_name,
             |b, _| {
+                // Pre-allocate keys to avoid measuring format!() overhead
+                let keys: Vec<String> = (0..100000).map(|i| format!("missing_key_{}", i)).collect();
                 let mut counter = 0;
                 b.iter(|| {
-                    let key = format!("missing_key_{}", counter);
+                    let key = keys[counter % 100000].clone();
                     counter += 1;
                     store.get(key)
                 })
@@ -66,11 +70,13 @@ pub fn get_benchmark(c: &mut Criterion) {
             map.insert(key, value);
         }
 
+        // Pre-allocate keys to avoid measuring format!() overhead
+        let keys: Vec<String> = (0..1000).map(|i| format!("key_{}", i)).collect();
         let mut counter = 0;
         b.iter(|| {
-            let key = format!("key_{}", counter % 1000);
+            let key = &keys[counter % 1000];
             counter += 1;
-            map.get(&key)
+            map.get(key)
         })
     });
 }
