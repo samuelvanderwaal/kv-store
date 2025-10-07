@@ -198,7 +198,7 @@ impl KvStore {
 impl KvEngine for KvStore {
     /// The setter function.
     /// ```
-    /// # use kvs::{KvStore, Result};
+    /// # use kvs::{KvStore, KvEngine, Result};
     /// # fn main() -> Result<()> {
     /// # let mut db = KvStore::open("./")?;
     /// db.set("key1".to_string(), "value1".to_string())?;
@@ -229,7 +229,7 @@ impl KvEngine for KvStore {
 
     /// The getter function.
     /// ```
-    /// # use kvs::{KvStore, Result};
+    /// # use kvs::{KvStore, KvEngine, Result};
     /// # fn main() -> Result<()> {
     /// # let mut db = KvStore::open("./")?;
     /// db.get("key".to_string())?;
@@ -258,11 +258,13 @@ impl KvEngine for KvStore {
 
     /// Remove values.
     /// ```
-    /// # use kvs::{KvStore, Result};
+    /// # use kvs::{KvStore, KvEngine, Result};
+    /// # use tempfile::TempDir;
     /// # fn main() -> Result<()> {
-    /// # let mut db = KvStore::open("./")?;
+    /// # let temp_dir = TempDir::new().expect("unable to create temp dir");
+    /// # let mut db = KvStore::open(temp_dir.path())?;
     /// # db.set("key1".to_string(), "value1".to_string())?;
-    /// db.remove("key1".to_string())?;
+    /// db.rm("key1".to_string())?;
     /// # Ok(())
     /// # }
     /// ```

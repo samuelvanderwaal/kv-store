@@ -27,6 +27,8 @@ pub enum KvError {
     Remove,
     #[error("failed to deserialize")]
     Deserialize(#[from] serde_json::Error),
+    #[error("sled error")]
+    Sled(#[from] sled::Error),
 
     // Encoding
     #[error("bson error")]
@@ -35,6 +37,8 @@ pub enum KvError {
     BincodeEncode(#[from] bincode::error::EncodeError),
     #[error("bincode decoding error")]
     BincodeDecoding(#[from] bincode::error::DecodeError),
+    #[error("utf8 decoding failed")]
+    Utf8(#[from] std::string::FromUtf8Error),
 
     // Index
     #[error("failed to insert into index")]

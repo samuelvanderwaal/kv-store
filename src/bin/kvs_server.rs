@@ -16,7 +16,7 @@ use {
 };
 
 use bincode::config::standard;
-use kvs::{EngineType, KvCommand, KvEngine, KvError, KvResponse, KvStore, Result};
+use kvs::{EngineType, KvCommand, KvEngine, KvError, KvResponse, KvSled, KvStore, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -81,10 +81,7 @@ pub fn open_engine(
 
     match requested_engine {
         EngineType::Kvs => Ok(RefCell::new(Box::new(KvStore::open(path)?))),
-        EngineType::Sled => {
-            // Ok(Box::new(SledKvEngine::open(path)?))
-            todo!("Sled engine not yet implemented")
-        }
+        EngineType::Sled => Ok(RefCell::new(Box::new(KvSled::open(path)?))),
         _ => panic!("unimplemented engine type!"),
     }
 }
@@ -139,7 +136,7 @@ impl Settings {
     fn new() -> Result<Settings> {
         let path = home_dir()
             .expect("failed to set platform home dir")
-            .join(".kvsrc");
+            .join(".kvsrc.toml");
 
         let config = Config::builder()
             .add_source(config::File::with_name(
