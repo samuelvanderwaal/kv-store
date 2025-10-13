@@ -16,3 +16,19 @@ use async and multi-threaded Rust.
 Utilizing a simple binary format for performance and efficiency. Length prefix and then the bincode
 serialization representation of the KvCommand enum. The lib has an optional "bincode" feature that
 enables the Encode and Decode derive macros on the KvCommand enum for additional performance.
+
+## BSON --> Bincode performance
+
+Switching to bincode improved performance significantly, likely due to both the smaller size of bincode and the extra serialization step in BSON where we used the Document format.
+
+| Operation                  | Before (µs/ns) | After (µs/ns) |          Δ % | Result                  |
+| -------------------------- | -------------: | ------------: | -----------: | ----------------------- |
+| `set_unique_keys/kvs`      |      2.9540 µs |     2.5546 µs | **-86.191%** | ✅ Performance improved |
+| `set_same_key/kvs`         |      1.7732 µs |     1.5418 µs | **-91.153%** | ✅ Performance improved |
+| `set_mixed_operations/kvs` |      2.8379 µs |     2.4443 µs | **-86.213%** | ✅ Performance improved |
+| `remove_existing_keys/kvs` |      21.959 µs |     21.837 µs | **-88.558%** | ✅ Performance improved |
+| `remove_same_key/kvs`      |       0.989 µs |      0.977 µs | **-78.283%** | ✅ Performance improved |
+| `remove_missing_keys/kvs`  |      34.243 µs |     34.152 µs | **-50.435%** | ✅ Performance improved |
+| `get_existing_keys/kvs`    |       0.870 µs |      0.869 µs | **-41.358%** | ✅ Performance improved |
+| `get_same_key/kvs`         |       0.909 µs |      0.909 µs | **-36.601%** | ✅ Performance improved |
+| `get_missing_keys/kvs`     |      33.765 µs |     33.754 µs | **-47.258%** | ✅ Performance improved |
