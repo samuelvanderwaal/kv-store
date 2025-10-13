@@ -12,7 +12,7 @@ use kvs::{KvEngine, KvSled, KvStore};
 pub fn io_benchmark_config() -> Criterion {
     Criterion::default()
         .sample_size(1000) // More samples for better statistics
-        .measurement_time(Duration::from_secs(15)) // Longer measurement time
+        .measurement_time(Duration::from_secs(17)) // Longer measurement time
         .warm_up_time(Duration::from_secs(5)) // Longer warm-up for I/O
         .noise_threshold(0.08) // Realistic noise threshold for I/O (8%)
 }

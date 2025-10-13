@@ -31,8 +31,6 @@ pub enum KvError {
     Sled(#[from] sled::Error),
 
     // Encoding
-    #[error("bson error")]
-    Bson(#[from] bson::error::Error),
     #[error("bincode encoding error")]
     BincodeEncode(#[from] bincode::error::EncodeError),
     #[error("bincode decoding error")]
