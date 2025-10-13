@@ -5,10 +5,8 @@ use std::{
     path::PathBuf,
 };
 
-use {
-    bson::Document,
-    serde::{Deserialize, Serialize},
-};
+use bincode::config::standard;
+use serde::{Deserialize, Serialize};
 
 use super::KvEngine;
 use crate::{KvError, Result};
@@ -33,7 +31,7 @@ pub enum KvCommand {
     Rm { key: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, bincode::Encode, bincode::Decode)]
 struct LogRecord {
     order: u64,
     command: KvCommand,
@@ -96,11 +94,9 @@ impl KvStore {
 
         loop {
             let start = self.read_file.stream_position()?;
-            let Ok(doc) = Document::from_reader(&mut self.read_file) else {
+            let Ok(command) = bincode::decode_from_reader(&mut self.read_file, standard()) else {
                 break;
             };
-
-            let command: KvCommand = bson::deserialize_from_document(doc)?;
 
             match command {
                 KvCommand::Set { key, value: _ } => {
@@ -123,7 +119,7 @@ impl KvStore {
         // Flush any pending writes before reading
         self.log_file.flush()?;
 
-        let mut log = OpenOptions::new()
+        let log = OpenOptions::new()
             .read(true)
             .write(false)
             .open(&self.path)?;
@@ -137,12 +133,13 @@ impl KvStore {
         let mut commands: HashMap<String, LogRecord> = HashMap::new();
         let mut nonce = 0;
 
+        // Create a BufReader once at the beginning
+        let mut reader = BufReader::new(log);
+
         loop {
-            let Ok(doc) = Document::from_reader(&mut log) else {
+            let Ok(command) = bincode::decode_from_reader(&mut reader, standard()) else {
                 break;
             };
-
-            let command: KvCommand = bson::deserialize_from_document(doc)?;
 
             match &command {
                 KvCommand::Get { key: _ } => continue,
@@ -162,7 +159,7 @@ impl KvStore {
             }
         }
 
-        drop(log);
+        drop(reader);
 
         let mut log = OpenOptions::new()
             .read(true)
@@ -178,10 +175,9 @@ impl KvStore {
         for record in records {
             let start = write_pos;
 
-            let doc = bson::serialize_to_document(&record.command)?;
-            let buf = bson::RawDocumentBuf::try_from(doc)?;
-            let bytes = buf.as_bytes();
-            log.write_all(bytes)?;
+            let bytes = bincode::encode_to_vec(&record.command, standard())?;
+
+            log.write_all(&bytes)?;
             write_pos += bytes.len() as u64;
 
             // Rebuild the index with new offsets
@@ -228,11 +224,9 @@ impl KvEngine for KvStore {
             key: key.clone(),
             value,
         };
-        let doc = bson::serialize_to_document(&command)?;
-        let buf = bson::RawDocumentBuf::try_from(doc)?;
+        let bytes = bincode::encode_to_vec(command, standard())?;
 
-        let bytes = buf.as_bytes();
-        self.log_file.write_all(bytes)?;
+        self.log_file.write_all(&bytes)?;
         let bytes_written = bytes.len() as u64;
 
         self.write_pos += bytes_written;
@@ -265,8 +259,7 @@ impl KvEngine for KvStore {
 
         if let Some(p) = pointer {
             self.read_file.seek(SeekFrom::Start(*p))?;
-            let doc = Document::from_reader(&mut self.read_file)?;
-            let command: KvCommand = bson::deserialize_from_document(doc)?;
+            let command: KvCommand = bincode::decode_from_reader(&mut self.read_file, standard())?;
             match command {
                 KvCommand::Set { key: _, value } => Ok(Some(value)),
                 KvCommand::Get { key: _ } => panic!("offset to invalid command!"),
@@ -293,11 +286,9 @@ impl KvEngine for KvStore {
         match self.index.remove(&key) {
             Some(_) => {
                 let command = KvCommand::Rm { key };
-                let doc = bson::serialize_to_document(&command)?;
-                let buf = bson::RawDocumentBuf::try_from(doc)?;
-                let bytes = buf.as_bytes();
+                let bytes = bincode::encode_to_vec(command, standard())?;
 
-                self.log_file.write_all(bytes)?;
+                self.log_file.write_all(&bytes)?;
                 self.log_file.flush()?;
 
                 self.write_pos += bytes.len() as u64;
