@@ -7,12 +7,14 @@ use {
 
 mod common;
 
+use common::*;
+
 pub fn get_benchmark(c: &mut Criterion) {
     let engines = vec!["kvs", "sled"];
 
     for engine_name in engines {
         let temp_dir = TempDir::new().expect("unable to create temporary working directory");
-        let mut store = common::create_engine(engine_name, temp_dir.path());
+        let store = common::create_engine(engine_name, temp_dir.path());
 
         // Pre-populate the store with data
         for i in 0..1000 {

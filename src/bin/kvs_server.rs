@@ -16,7 +16,7 @@ use {
 };
 
 use bincode::config::standard;
-use kvs::{EngineType, KvCommand, KvEngine, KvError, KvResponse, KvSled, KvStore, Result};
+use kvs::{Engine, EngineType, KvCommand, KvEngine, KvError, KvResponse, Result};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -61,10 +61,7 @@ fn set_engine_type(p: &Path, engine: EngineType) -> Result<()> {
 }
 
 /// Opens the appropriate engine based on what's persisted, or creates new with specified type
-pub fn open_engine(
-    path: &Path,
-    requested_engine: EngineType,
-) -> Result<RefCell<Box<dyn KvEngine>>> {
+pub fn open_engine(path: &Path, requested_engine: EngineType) -> Result<Engine> {
     match get_engine_type(path)? {
         Some(existing_engine) if existing_engine != requested_engine => {
             return Err(KvError::WrongEngine {
@@ -79,11 +76,7 @@ pub fn open_engine(
         _ => {} // Engine types match, proceed
     }
 
-    match requested_engine {
-        EngineType::Kvs => Ok(RefCell::new(Box::new(KvStore::open(path)?))),
-        EngineType::Sled => Ok(RefCell::new(Box::new(KvSled::open(path)?))),
-        _ => panic!("unimplemented engine type!"),
-    }
+    Engine::open(requested_engine, path)
 }
 
 fn main() -> Result<()> {
@@ -93,7 +86,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let engine = open_engine(&settings.storage_path, cli.engine)?;
+    let engine = RefCell::new(open_engine(&settings.storage_path, cli.engine)?);
 
     info!("version {}", env!("CARGO_PKG_VERSION"));
     info!("Engine: {:?}", cli.engine);
@@ -149,7 +142,7 @@ impl Settings {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, engine: &RefCell<Box<dyn KvEngine>>) -> Result<()> {
+fn handle_connection(mut stream: TcpStream, engine: &RefCell<Engine>) -> Result<()> {
     let mut len_bytes = [0u8; 4];
     stream.read_exact(&mut len_bytes)?;
     let len = u32::from_be_bytes(len_bytes) as usize;
@@ -163,21 +156,21 @@ fn handle_connection(mut stream: TcpStream, engine: &RefCell<Box<dyn KvEngine>>)
     // Process command and create response
     let response = match command {
         KvCommand::Get { key } => {
-            let mut engine = engine.borrow_mut();
+            let engine = engine.borrow();
             match engine.get(key) {
                 Ok(value) => KvResponse::Ok(value),
                 Err(e) => KvResponse::Err(e.to_string()),
             }
         }
         KvCommand::Set { key, value } => {
-            let mut engine = engine.borrow_mut();
+            let engine = engine.borrow();
             match engine.set(key, value) {
                 Ok(()) => KvResponse::Ok(None),
                 Err(e) => KvResponse::Err(e.to_string()),
             }
         }
         KvCommand::Rm { key } => {
-            let mut engine = engine.borrow_mut();
+            let engine = engine.borrow();
             match engine.rm(key) {
                 Ok(()) => KvResponse::Ok(None),
                 Err(e) => KvResponse::Err(e.to_string()),

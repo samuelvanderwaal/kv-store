@@ -5,8 +5,9 @@
 
 mod engine;
 mod error;
+pub mod thread_pool;
 
-pub use engine::{EngineType, KvCommand, KvEngine, KvResponse, KvSled, KvStore};
+pub use engine::{Engine, EngineType, KvCommand, KvEngine, KvResponse, KvSled, KvStore};
 pub use error::KvError;
 
 /// Aliased result using the library's custom error.

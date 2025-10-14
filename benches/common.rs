@@ -1,7 +1,7 @@
 use criterion::Criterion;
 use std::time::Duration;
 
-use kvs::{KvEngine, KvSled, KvStore};
+pub use kvs::{Engine, EngineType, KvEngine};
 
 /// Shared benchmark configuration for I/O-heavy operations
 ///
@@ -21,10 +21,10 @@ pub fn io_benchmark_config() -> Criterion {
 ///
 /// Supports "kvs" and "sled" engines. This helper function allows
 /// benchmarks to be parameterized across different storage backends.
-pub fn create_engine(engine_name: &str, path: &std::path::Path) -> Box<dyn KvEngine> {
+pub fn create_engine(engine_name: &str, path: &std::path::Path) -> Engine {
     match engine_name {
-        "kvs" => Box::new(KvStore::open(path).unwrap()),
-        "sled" => Box::new(KvSled::open(path).unwrap()),
+        "kvs" => Engine::open(EngineType::Kvs, path).unwrap(),
+        "sled" => Engine::open(EngineType::Sled, path).unwrap(),
         _ => panic!("Unknown engine: {}", engine_name),
     }
 }

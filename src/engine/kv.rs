@@ -3,10 +3,17 @@ use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Seek, SeekFrom, Write},
     path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
-use bincode::config::standard;
-use serde::{Deserialize, Serialize};
+use {
+    bincode::config::standard,
+    dashmap::DashMap,
+    serde::{Deserialize, Serialize},
+};
 
 use super::KvEngine;
 use crate::{KvError, Result};
@@ -38,13 +45,22 @@ struct LogRecord {
 }
 
 ///The main data structure that stores the values.
+#[derive(Clone)]
 pub struct KvStore {
+    inner: Arc<KvStoreInner>,
+}
+
+pub struct KvStoreInner {
     path: PathBuf,
-    index: HashMap<String, u64>,
-    uncompacted_bytes: u64,
+    index: DashMap<String, u64>,
+    uncompacted_bytes: AtomicU64,
+    read_file: Mutex<BufReader<File>>,
+    write_state: Mutex<WriteState>,
+}
+
+struct WriteState {
     log_file: BufWriter<File>,
-    read_file: BufReader<File>,
-    write_pos: u64,
+    write_pos: AtomicU64,
 }
 
 impl KvStore {
@@ -69,60 +85,76 @@ impl KvStore {
 
         let read_file = OpenOptions::new().read(true).open(&p)?;
 
-        let mut store = KvStore {
-            path: p,
-            index: HashMap::new(),
-            uncompacted_bytes: 0,
-            log_file: BufWriter::new(write_file),
-            read_file: BufReader::new(read_file),
-            write_pos: 0,
+        let store = KvStore {
+            inner: Arc::new(KvStoreInner {
+                path: p,
+                index: DashMap::new(),
+                uncompacted_bytes: AtomicU64::new(0),
+                write_state: Mutex::new(WriteState {
+                    log_file: BufWriter::new(write_file),
+                    write_pos: AtomicU64::new(0),
+                }),
+                read_file: Mutex::new(BufReader::new(read_file)),
+            }),
         };
 
         // Read the log to update the index.
         store.load()?;
-        store.write_pos = store.read_file.get_ref().metadata()?.len();
+        {
+            let f = store.inner.read_file.lock()?;
+            let length = f.get_ref().metadata()?.len();
+            store
+                .inner
+                .write_state
+                .lock()?
+                .write_pos
+                .store(length, Ordering::SeqCst);
+        }
 
         Ok(store)
     }
 
-    fn load(&mut self) -> Result<()> {
+    fn load(&self) -> Result<()> {
         // Flush any pending writes before reading
-        self.log_file.flush()?;
+        self.inner.write_state.lock()?.log_file.flush()?;
 
         // Rewind to start of file
-        self.read_file.seek(SeekFrom::Start(0))?;
+        self.inner.read_file.lock()?.seek(SeekFrom::Start(0))?;
 
+        let mut read_file = self.inner.read_file.lock()?;
         loop {
-            let start = self.read_file.stream_position()?;
-            let Ok(command) = bincode::decode_from_reader(&mut self.read_file, standard()) else {
+            let start = read_file.stream_position()?;
+            let Ok(command) = bincode::decode_from_reader(&mut *read_file, standard()) else {
                 break;
             };
 
             match command {
                 KvCommand::Set { key, value: _ } => {
-                    self.index.insert(key, start);
+                    self.inner.index.insert(key, start);
                 }
                 KvCommand::Get { key: _ } => (),
                 KvCommand::Rm { key } => {
-                    self.index.remove(&key);
+                    self.inner.index.remove(&key);
                 }
             }
         }
 
         // Get the current file size as initial uncompacted bytes
-        self.uncompacted_bytes = self.read_file.get_ref().metadata()?.len();
+        self.inner
+            .uncompacted_bytes
+            .store(read_file.get_ref().metadata()?.len(), Ordering::SeqCst);
 
         Ok(())
     }
 
-    fn compact(&mut self) -> Result<()> {
+    fn compact(&self) -> Result<()> {
         // Flush any pending writes before reading
-        self.log_file.flush()?;
+        self.inner.write_state.lock()?.log_file.flush()?;
 
         let log = OpenOptions::new()
             .read(true)
             .write(false)
-            .open(&self.path)?;
+            .open(&self.inner.path)?;
 
         // Loop over the file reading each command
         // Get --> do nothing
@@ -165,12 +197,12 @@ impl KvStore {
             .read(true)
             .write(true)
             .truncate(true)
-            .open(&self.path)?;
+            .open(&self.inner.path)?;
 
         let mut records: Vec<&LogRecord> = commands.values().collect();
         records.sort();
 
-        self.index.clear();
+        self.inner.index.clear();
         let mut write_pos = 0;
         for record in records {
             let start = write_pos;
@@ -182,14 +214,18 @@ impl KvStore {
 
             // Rebuild the index with new offsets
             if let KvCommand::Set { key, value: _ } = &record.command {
-                self.index.insert(key.clone(), start);
+                self.inner.index.insert(key.clone(), start);
             }
         }
 
         log.flush()?;
-        self.uncompacted_bytes = 0;
 
-        self.write_pos = write_pos;
+        self.inner.uncompacted_bytes.store(0, Ordering::SeqCst);
+        self.inner
+            .write_state
+            .lock()?
+            .write_pos
+            .store(write_pos, Ordering::SeqCst);
 
         // Update file handles after compaction
         drop(log);
@@ -197,11 +233,11 @@ impl KvStore {
             .create(true)
             .truncate(false)
             .append(true)
-            .open(&self.path)?;
-        let read_file = OpenOptions::new().read(true).open(&self.path)?;
+            .open(&self.inner.path)?;
+        let read_file = OpenOptions::new().read(true).open(&self.inner.path)?;
 
-        self.log_file = BufWriter::new(write_file);
-        self.read_file = BufReader::new(read_file);
+        self.inner.write_state.lock()?.log_file = BufWriter::new(write_file);
+        *self.inner.read_file.lock()? = BufReader::new(read_file);
 
         Ok(())
     }
@@ -217,25 +253,38 @@ impl KvEngine for KvStore {
     /// # Ok(())
     /// # }
     /// ```
-    fn set(&mut self, key: String, value: String) -> Result<()> {
-        let start = self.write_pos;
-
+    fn set(&self, key: String, value: String) -> Result<()> {
         let command = KvCommand::Set {
             key: key.clone(),
             value,
         };
         let bytes = bincode::encode_to_vec(command, standard())?;
 
-        self.log_file.write_all(&bytes)?;
+        // Acquire lock
+        let mut write_state = self.inner.write_state.lock()?;
+
+        // Load position value
+        let start = write_state.write_pos.load(Ordering::SeqCst);
+
+        write_state.log_file.write_all(&bytes)?;
+
+        // Update position
         let bytes_written = bytes.len() as u64;
 
-        self.write_pos += bytes_written;
+        write_state
+            .write_pos
+            .fetch_add(bytes_written, Ordering::SeqCst);
 
-        self.index.insert(key, start);
-        self.uncompacted_bytes += bytes_written;
+        drop(write_state);
+
+        self.inner.index.insert(key.clone(), start);
+
+        self.inner
+            .uncompacted_bytes
+            .fetch_add(bytes_written, Ordering::SeqCst);
 
         // Check if compaction is needed
-        if self.uncompacted_bytes > COMPACTION_THRESHOLD {
+        if self.inner.uncompacted_bytes.load(Ordering::SeqCst) > COMPACTION_THRESHOLD {
             self.compact()?;
         }
 
@@ -251,15 +300,17 @@ impl KvEngine for KvStore {
     /// # Ok(())
     /// # }
     /// ```
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
         // Flush writes to ensure read_file sees all data
-        self.log_file.flush()?;
+        self.inner.write_state.lock()?.log_file.flush()?;
 
-        let pointer = self.index.get(&key);
+        let pointer = self.inner.index.get(&key);
 
         if let Some(p) = pointer {
-            self.read_file.seek(SeekFrom::Start(*p))?;
-            let command: KvCommand = bincode::decode_from_reader(&mut self.read_file, standard())?;
+            // Get and hold lock to avoid TOCTOU race conditions
+            let mut read_file = self.inner.read_file.lock()?;
+            read_file.seek(SeekFrom::Start(*p))?;
+            let command: KvCommand = bincode::decode_from_reader(&mut *read_file, standard())?;
             match command {
                 KvCommand::Set { key: _, value } => Ok(Some(value)),
                 KvCommand::Get { key: _ } => panic!("offset to invalid command!"),
@@ -282,20 +333,27 @@ impl KvEngine for KvStore {
     /// # Ok(())
     /// # }
     /// ```
-    fn rm(&mut self, key: String) -> Result<()> {
-        match self.index.remove(&key) {
+    fn rm(&self, key: String) -> Result<()> {
+        match self.inner.index.remove(&key) {
             Some(_) => {
                 let command = KvCommand::Rm { key };
                 let bytes = bincode::encode_to_vec(command, standard())?;
 
-                self.log_file.write_all(&bytes)?;
-                self.log_file.flush()?;
+                let mut write_state = self.inner.write_state.lock()?;
+                write_state.log_file.write_all(&bytes)?;
+                write_state.log_file.flush()?;
 
-                self.write_pos += bytes.len() as u64;
-                self.uncompacted_bytes += bytes.len() as u64;
+                write_state
+                    .write_pos
+                    .fetch_add(bytes.len() as u64, Ordering::SeqCst);
+                drop(write_state);
+
+                self.inner
+                    .uncompacted_bytes
+                    .fetch_add(bytes.len() as u64, Ordering::SeqCst);
 
                 // Check if compaction is needed
-                if self.uncompacted_bytes > COMPACTION_THRESHOLD {
+                if self.inner.uncompacted_bytes.load(Ordering::SeqCst) > COMPACTION_THRESHOLD {
                     self.compact()?;
                 }
 
