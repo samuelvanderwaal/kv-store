@@ -21,6 +21,7 @@ path = "src/bin/kvs_server.rs"
 bincode = {version = "2.0.1", features = ["serde"]}
 clap = { version = "4.5.47", features = ["derive", "env"] }
 config = "0.15.18"
+crossbeam = "0.8.4"
 dashmap = {version = "6.1.0", features = ["serde"]}
 serde = { version = "1.0.225", features = ["derive"] }
 serde_json = "1.0.145"

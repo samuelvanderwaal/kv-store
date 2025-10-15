@@ -1,4 +1,11 @@
-use std::thread;
+use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
+
+use crossbeam::queue::ArrayQueue;
 
 use super::Result;
 
@@ -8,6 +15,11 @@ pub trait ThreadPool {
     fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static;
+}
+
+pub enum ThreadPoolMessage {
+    RunJob(Box<dyn FnOnce() + Send + 'static>),
+    Shutdown,
 }
 
 pub struct NaiveThreadPool {}
@@ -23,16 +35,64 @@ impl ThreadPool for NaiveThreadPool {
     }
 }
 
-pub struct SharedQueueThreadPool {}
+const QUEUE_SIZE: usize = 1024;
+
+pub struct SharedQueueThreadPool {
+    queue: Arc<ArrayQueue<ThreadPoolMessage>>,
+    pool: Vec<thread::JoinHandle<()>>,
+}
 
 impl ThreadPool for SharedQueueThreadPool {
     #[allow(refining_impl_trait)]
-    fn new(_threads: u32) -> Result<SharedQueueThreadPool> {
-        Ok(SharedQueueThreadPool {})
+    fn new(threads: u32) -> Result<SharedQueueThreadPool> {
+        // Make sure the queue has enough space for the shutdown messages.
+        let queue = Arc::new(ArrayQueue::new(QUEUE_SIZE + threads as usize));
+        let mut pool = Vec::with_capacity(threads as usize);
+
+        for _ in 0..threads {
+            let queue = queue.clone();
+            let handle = thread::spawn(move || {
+                loop {
+                    match queue.pop() {
+                        Some(message) => match message {
+                            ThreadPoolMessage::RunJob(job) => {
+                                // Swallow panics to avoid crashing the thread.
+                                let _ = catch_unwind(AssertUnwindSafe(job));
+                            }
+                            ThreadPoolMessage::Shutdown => break,
+                        },
+                        None => thread::sleep(Duration::from_micros(100)),
+                    }
+                }
+            });
+            pool.push(handle);
+        }
+
+        Ok(SharedQueueThreadPool { queue, pool })
     }
 
-    fn spawn<F: FnOnce() + Send + 'static>(&self, _job: F) {
-        todo!();
+    fn spawn<F: FnOnce() + Send + 'static>(&self, job: F) {
+        if self
+            .queue
+            .push(ThreadPoolMessage::RunJob(Box::new(job)))
+            .is_err()
+        {
+            panic!("queue is full");
+        }
+    }
+}
+
+impl Drop for SharedQueueThreadPool {
+    fn drop(&mut self) {
+        // Push shutdown messages to queue to start shutting down threads.
+        for _ in 0..self.pool.len() {
+            // Ignore errors for now. Should always be enough space in the queue for shutdown messages.
+            let _ = self.queue.push(ThreadPoolMessage::Shutdown);
+        }
+
+        for handle in self.pool.drain(..) {
+            let _ = handle.join(); // Ignore errors for now.
+        }
     }
 }
 
