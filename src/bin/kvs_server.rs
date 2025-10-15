@@ -1,10 +1,10 @@
 use std::{
-    cell::RefCell,
     env::home_dir,
     fs::{self, File},
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
+    sync::{Arc, RwLock},
 };
 
 use {
@@ -16,7 +16,10 @@ use {
 };
 
 use bincode::config::standard;
-use kvs::{Engine, EngineType, KvCommand, KvEngine, KvError, KvResponse, Result};
+use kvs::{
+    Engine, EngineType, KvCommand, KvEngine, KvError, KvResponse, Result,
+    thread_pool::{NaiveThreadPool, ThreadPool},
+};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -86,7 +89,10 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let engine = RefCell::new(open_engine(&settings.storage_path, cli.engine)?);
+    let engine = Arc::new(RwLock::new(open_engine(
+        &settings.storage_path,
+        cli.engine,
+    )?));
 
     info!("version {}", env!("CARGO_PKG_VERSION"));
     info!("Engine: {:?}", cli.engine);
@@ -95,8 +101,12 @@ fn main() -> Result<()> {
 
     info!("Listening on {}", cli.addr);
 
+    let thread_pool = NaiveThreadPool::new(8)?; // Naive--does not create an actual thread pool.
+
     for stream in listener.incoming() {
-        handle_connection(stream?, &engine)?;
+        let s = stream?;
+        let e = engine.clone();
+        thread_pool.spawn(move || handle_connection(s, e).unwrap());
     }
 
     Ok(())
@@ -142,7 +152,7 @@ impl Settings {
     }
 }
 
-fn handle_connection(mut stream: TcpStream, engine: &RefCell<Engine>) -> Result<()> {
+fn handle_connection(mut stream: TcpStream, engine: Arc<RwLock<Engine>>) -> Result<()> {
     let mut len_bytes = [0u8; 4];
     stream.read_exact(&mut len_bytes)?;
     let len = u32::from_be_bytes(len_bytes) as usize;
@@ -156,21 +166,21 @@ fn handle_connection(mut stream: TcpStream, engine: &RefCell<Engine>) -> Result<
     // Process command and create response
     let response = match command {
         KvCommand::Get { key } => {
-            let engine = engine.borrow();
+            let engine = engine.read()?;
             match engine.get(key) {
                 Ok(value) => KvResponse::Ok(value),
                 Err(e) => KvResponse::Err(e.to_string()),
             }
         }
         KvCommand::Set { key, value } => {
-            let engine = engine.borrow();
+            let engine = engine.read()?;
             match engine.set(key, value) {
                 Ok(()) => KvResponse::Ok(None),
                 Err(e) => KvResponse::Err(e.to_string()),
             }
         }
         KvCommand::Rm { key } => {
-            let engine = engine.borrow();
+            let engine = engine.read()?;
             match engine.rm(key) {
                 Ok(()) => KvResponse::Ok(None),
                 Err(e) => KvResponse::Err(e.to_string()),
