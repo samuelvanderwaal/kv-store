@@ -45,8 +45,7 @@ pub struct SharedQueueThreadPool {
 impl ThreadPool for SharedQueueThreadPool {
     #[allow(refining_impl_trait)]
     fn new(threads: u32) -> Result<SharedQueueThreadPool> {
-        // Make sure the queue has enough space for the shutdown messages.
-        let queue = Arc::new(ArrayQueue::new(QUEUE_SIZE + threads as usize));
+        let queue = Arc::new(ArrayQueue::new(QUEUE_SIZE));
         let mut pool = Vec::with_capacity(threads as usize);
 
         for _ in 0..threads {
@@ -86,7 +85,7 @@ impl Drop for SharedQueueThreadPool {
     fn drop(&mut self) {
         // Push shutdown messages to queue to start shutting down threads.
         for _ in 0..self.pool.len() {
-            // Ignore errors for now. Should always be enough space in the queue for shutdown messages.
+            // Ignore errors for now.
             let _ = self.queue.push(ThreadPoolMessage::Shutdown);
         }
 
