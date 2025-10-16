@@ -35,6 +35,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 assert_cmd = "0.11"
 criterion = "0.3"
 crossbeam-utils = "0.8.21"
+num_cpus = "1.17.0"
 panic-control = "0.1.4"
 predicates = "1.0.0"
 rand = "0.6.5"
