@@ -63,4 +63,8 @@ impl KvClient {
 
         Ok(())
     }
+
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
+        self.send_command(KvCommand::Set { key, value })
+    }
 }

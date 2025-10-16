@@ -3,7 +3,12 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        mpsc::{Receiver, TryRecvError},
+    },
+    thread,
+    time::Duration,
 };
 
 use crate::{
@@ -43,6 +48,40 @@ impl<P: ThreadPool> KvServer<P> {
             });
         }
         Ok(())
+    }
+
+    pub fn run_until_shutdown(&self, shutdown_rx: Receiver<()>) -> Result<()> {
+        self.listener.set_nonblocking(true)?;
+
+        loop {
+            match shutdown_rx.try_recv() {
+                Ok(()) => break,
+                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => (),
+            }
+
+            // Try to accept connection
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    let engine = self.engine.clone();
+                    self.thread_pool.spawn(move || {
+                        let _ = handle_connection(stream, engine);
+                    });
+                }
+                Err(ref e) => {
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        // No connection waiting, sleep briefly
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.listener.local_addr()?)
     }
 }
 
