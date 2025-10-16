@@ -156,15 +156,18 @@ impl Drop for ChannelThreadPool {
     }
 }
 
-pub struct RayonThreadPool {}
+pub struct RayonThreadPool {
+    pool: rayon::ThreadPool,
+}
 
 impl ThreadPool for RayonThreadPool {
     #[allow(refining_impl_trait)]
     fn new(_threads: u32) -> Result<RayonThreadPool> {
-        Ok(RayonThreadPool {})
+        let pool = rayon::ThreadPoolBuilder::new().build().unwrap();
+        Ok(RayonThreadPool { pool })
     }
 
-    fn spawn<F: FnOnce() + Send + 'static>(&self, _job: F) {
-        todo!();
+    fn spawn<F: FnOnce() + Send + 'static>(&self, job: F) {
+        self.pool.spawn(job);
     }
 }
