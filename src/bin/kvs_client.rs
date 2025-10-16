@@ -53,6 +53,65 @@ impl From<Commands> for KvCommand {
     }
 }
 
+pub struct KvClient {
+    stream: TcpStream,
+}
+
+impl KvClient {
+    fn new(addr: SocketAddr) -> Result<Self> {
+        let stream = TcpStream::connect(addr)?;
+
+        Ok(KvClient { stream })
+    }
+
+    /// Create a client from an existing stream (useful for testing)
+    pub fn from_stream(stream: TcpStream) -> Self {
+        KvClient { stream }
+    }
+
+    fn send_command(&mut self, command: Commands) -> Result<()> {
+        let kv_command: KvCommand = command.into();
+        let bytes = bincode::serde::encode_to_vec(&kv_command, standard())?;
+        let len = bytes.len() as u32;
+
+        // Send command
+        self.stream.write_all(&len.to_be_bytes())?;
+        self.stream.write_all(&bytes)?;
+        self.stream.flush()?;
+
+        // Read response
+        let mut response_len_bytes = [0u8; 4];
+        self.stream.read_exact(&mut response_len_bytes)?;
+        let response_len = u32::from_be_bytes(response_len_bytes) as usize;
+
+        let mut response_data = vec![0u8; response_len];
+        self.stream.read_exact(&mut response_data)?;
+
+        let (response, _): (KvResponse, usize) =
+            bincode::serde::decode_from_slice(&response_data, standard())?;
+
+        // Handle response
+        match response {
+            KvResponse::Ok(Some(value)) => {
+                println!("{}", value);
+            }
+            KvResponse::Ok(None) => {
+                // For Get commands with no value, print "Key not found"
+                // For Set/Rm commands, no output expected on success
+                if matches!(kv_command, KvCommand::Get { .. }) {
+                    println!("Key not found");
+                }
+            }
+            KvResponse::Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -62,48 +121,8 @@ fn main() -> Result<()> {
         std::process::exit(2); // Exit code 2 is what clap uses for usage errors
     });
 
-    let mut stream = TcpStream::connect(addr)?;
-
-    // Keep track of command type for response handling
-    let is_get_command = matches!(cli.command, Commands::Get { .. });
-
-    let kv_command: KvCommand = cli.command.into();
-    let bytes = bincode::serde::encode_to_vec(&kv_command, standard())?;
-    let len = bytes.len() as u32;
-
-    // Send command
-    stream.write_all(&len.to_be_bytes())?;
-    stream.write_all(&bytes)?;
-    stream.flush()?;
-
-    // Read response
-    let mut response_len_bytes = [0u8; 4];
-    stream.read_exact(&mut response_len_bytes)?;
-    let response_len = u32::from_be_bytes(response_len_bytes) as usize;
-
-    let mut response_data = vec![0u8; response_len];
-    stream.read_exact(&mut response_data)?;
-
-    let (response, _): (KvResponse, usize) =
-        bincode::serde::decode_from_slice(&response_data, standard())?;
-
-    // Handle response
-    match response {
-        KvResponse::Ok(Some(value)) => {
-            println!("{}", value);
-        }
-        KvResponse::Ok(None) => {
-            // For Get commands with no value, print "Key not found"
-            // For Set/Rm commands, no output expected on success
-            if is_get_command {
-                println!("Key not found");
-            }
-        }
-        KvResponse::Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    }
+    let mut client = KvClient::new(addr)?;
+    client.send_command(cli.command)?;
 
     Ok(())
 }
