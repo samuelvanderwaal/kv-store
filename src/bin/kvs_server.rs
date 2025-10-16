@@ -18,7 +18,7 @@ use {
 use bincode::config::standard;
 use kvs::{
     Engine, EngineType, KvCommand, KvEngine, KvError, KvResponse, Result,
-    thread_pool::{NaiveThreadPool, ThreadPool},
+    thread_pool::{ChannelThreadPool, ThreadPool},
 };
 
 const HELP: &str = "\
@@ -47,67 +47,54 @@ struct Cli {
     engine: EngineType,
 }
 
-fn get_engine_type(p: &Path) -> Result<Option<EngineType>> {
-    let engine_file = p.join(".engine.lock");
-    if !engine_file.exists() {
-        return Ok(None);
+pub struct KvServer<P: ThreadPool> {
+    engine: Arc<RwLock<Engine>>,
+    thread_pool: P,
+    listener: TcpListener,
+}
+
+impl<P: ThreadPool> KvServer<P> {
+    fn new(
+        addr: SocketAddr,
+        storage_path: PathBuf,
+        engine_type: EngineType,
+        thread_pool: P,
+    ) -> Result<KvServer<P>> {
+        let engine = Arc::new(RwLock::new(open_engine(&storage_path, engine_type)?));
+        let listener = TcpListener::bind(addr)?;
+
+        Ok(KvServer {
+            engine,
+            thread_pool,
+            listener,
+        })
     }
 
-    Ok(Some(serde_json::from_reader(File::open(engine_file)?)?))
-}
-
-fn set_engine_type(p: &Path, engine: EngineType) -> Result<()> {
-    let engine_file = p.join(".engine.lock");
-    fs::write(engine_file, serde_json::to_string(&engine)?)?;
-
-    Ok(())
-}
-
-/// Opens the appropriate engine based on what's persisted, or creates new with specified type
-pub fn open_engine(path: &Path, requested_engine: EngineType) -> Result<Engine> {
-    match get_engine_type(path)? {
-        Some(existing_engine) if existing_engine != requested_engine => {
-            return Err(KvError::WrongEngine {
-                requested: requested_engine,
-                existing: existing_engine,
+    fn run(&self) -> Result<()> {
+        for stream in self.listener.incoming() {
+            let stream = stream?;
+            let engine = self.engine.clone();
+            self.thread_pool.spawn(move || {
+                let _ = handle_connection(stream, engine);
             });
         }
-        None => {
-            // First time, persist the engine choice
-            set_engine_type(path, requested_engine)?;
-        }
-        _ => {} // Engine types match, proceed
+        Ok(())
     }
-
-    Engine::open(requested_engine, path)
 }
 
 fn main() -> Result<()> {
     init_logging();
+    info!("version {}", env!("CARGO_PKG_VERSION"));
+
+    let cli = Cli::parse();
+    info!("Engine: {:?}", cli.engine);
 
     let settings = Settings::new()?;
 
-    let cli = Cli::parse();
-
-    let engine = Arc::new(RwLock::new(open_engine(
-        &settings.storage_path,
-        cli.engine,
-    )?));
-
-    info!("version {}", env!("CARGO_PKG_VERSION"));
-    info!("Engine: {:?}", cli.engine);
-
-    let listener = TcpListener::bind(cli.addr)?;
-
+    let thread_pool = ChannelThreadPool::new(8)?;
+    let server = KvServer::new(cli.addr, settings.storage_path, cli.engine, thread_pool)?;
     info!("Listening on {}", cli.addr);
-
-    let thread_pool = NaiveThreadPool::new(8)?; // Naive--does not create an actual thread pool.
-
-    for stream in listener.incoming() {
-        let s = stream?;
-        let e = engine.clone();
-        thread_pool.spawn(move || handle_connection(s, e).unwrap());
-    }
+    server.run()?;
 
     Ok(())
 }
@@ -197,4 +184,37 @@ fn handle_connection(mut stream: TcpStream, engine: Arc<RwLock<Engine>>) -> Resu
     stream.flush()?;
 
     Ok(())
+}
+
+fn get_engine_type(p: &Path) -> Result<Option<EngineType>> {
+    let engine_file = p.join(".engine.lock");
+    if !engine_file.exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(serde_json::from_reader(File::open(engine_file)?)?))
+}
+fn set_engine_type(p: &Path, engine: EngineType) -> Result<()> {
+    let engine_file = p.join(".engine.lock");
+    fs::write(engine_file, serde_json::to_string(&engine)?)?;
+
+    Ok(())
+}
+/// Opens the appropriate engine based on what's persisted, or creates new with specified type
+pub fn open_engine(path: &Path, requested_engine: EngineType) -> Result<Engine> {
+    match get_engine_type(path)? {
+        Some(existing_engine) if existing_engine != requested_engine => {
+            return Err(KvError::WrongEngine {
+                requested: requested_engine,
+                existing: existing_engine,
+            });
+        }
+        None => {
+            // First time, persist the engine choice
+            set_engine_type(path, requested_engine)?;
+        }
+        _ => {} // Engine types match, proceed
+    }
+
+    Engine::open(requested_engine, path)
 }
