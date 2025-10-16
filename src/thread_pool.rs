@@ -1,13 +1,18 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
-    thread,
+    sync::{
+        Arc, Mutex,
+        mpsc::{Sender, channel},
+    },
+    thread::{self},
     time::Duration,
 };
 
 use crossbeam::queue::ArrayQueue;
 
 use super::Result;
+
+pub type Job = Box<dyn FnOnce() + Send + 'static>;
 
 pub trait ThreadPool {
     fn new(threads: u32) -> Result<impl ThreadPool>;
@@ -87,6 +92,62 @@ impl Drop for SharedQueueThreadPool {
         for _ in 0..self.pool.len() {
             // Ignore errors for now.
             let _ = self.queue.push(ThreadPoolMessage::Shutdown);
+        }
+
+        for handle in self.pool.drain(..) {
+            let _ = handle.join(); // Ignore errors for now.
+        }
+    }
+}
+
+pub struct ChannelThreadPool {
+    pool: Vec<thread::JoinHandle<()>>,
+    sender: Sender<ThreadPoolMessage>,
+}
+
+impl ThreadPool for ChannelThreadPool {
+    #[allow(refining_impl_trait)]
+    fn new(threads: u32) -> Result<ChannelThreadPool> {
+        let (tx, rx) = channel();
+        let receiver = Arc::new(Mutex::new(rx));
+
+        let mut pool = Vec::with_capacity(threads as usize);
+
+        for _ in 0..threads {
+            let receiver = receiver.clone();
+            let handle = thread::spawn(move || {
+                while let Ok(message) = receiver.lock().unwrap().recv() {
+                    match message {
+                        ThreadPoolMessage::RunJob(job) => {
+                            // Swallow panics to avoid crashing the thread.
+                            let _ = catch_unwind(AssertUnwindSafe(job));
+                        }
+                        ThreadPoolMessage::Shutdown => break,
+                    }
+                }
+            });
+            pool.push(handle);
+        }
+
+        Ok(ChannelThreadPool { pool, sender: tx })
+    }
+
+    fn spawn<F: FnOnce() + Send + 'static>(&self, job: F) {
+        if self
+            .sender
+            .send(ThreadPoolMessage::RunJob(Box::new(job)))
+            .is_err()
+        {
+            panic!("channel hung up");
+        }
+    }
+}
+
+impl Drop for ChannelThreadPool {
+    fn drop(&mut self) {
+        // Send shutdown signal to all workers
+        for _ in 0..self.pool.len() {
+            let _ = self.sender.send(ThreadPoolMessage::Shutdown);
         }
 
         for handle in self.pool.drain(..) {
