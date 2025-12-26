@@ -1,11 +1,4 @@
-use std::{
-    cell::RefCell,
-    env::home_dir,
-    fs::{self, File},
-    io::{Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
-};
+use std::{env::home_dir, net::SocketAddr, path::PathBuf};
 
 use {
     clap::Parser,
@@ -15,8 +8,10 @@ use {
     tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt},
 };
 
-use bincode::config::standard;
-use kvs::{EngineType, KvCommand, KvEngine, KvError, KvResponse, KvSled, KvStore, Result};
+use kvs::{
+    EngineType, KvServer, Result,
+    thread_pool::{ChannelThreadPool, ThreadPool},
+};
 
 const HELP: &str = "\
 {before-help}{name} {version}
@@ -44,67 +39,19 @@ struct Cli {
     engine: EngineType,
 }
 
-fn get_engine_type(p: &Path) -> Result<Option<EngineType>> {
-    let engine_file = p.join(".engine.lock");
-    if !engine_file.exists() {
-        return Ok(None);
-    }
-
-    Ok(Some(serde_json::from_reader(File::open(engine_file)?)?))
-}
-
-fn set_engine_type(p: &Path, engine: EngineType) -> Result<()> {
-    let engine_file = p.join(".engine.lock");
-    fs::write(engine_file, serde_json::to_string(&engine)?)?;
-
-    Ok(())
-}
-
-/// Opens the appropriate engine based on what's persisted, or creates new with specified type
-pub fn open_engine(
-    path: &Path,
-    requested_engine: EngineType,
-) -> Result<RefCell<Box<dyn KvEngine>>> {
-    match get_engine_type(path)? {
-        Some(existing_engine) if existing_engine != requested_engine => {
-            return Err(KvError::WrongEngine {
-                requested: requested_engine,
-                existing: existing_engine,
-            });
-        }
-        None => {
-            // First time, persist the engine choice
-            set_engine_type(path, requested_engine)?;
-        }
-        _ => {} // Engine types match, proceed
-    }
-
-    match requested_engine {
-        EngineType::Kvs => Ok(RefCell::new(Box::new(KvStore::open(path)?))),
-        EngineType::Sled => Ok(RefCell::new(Box::new(KvSled::open(path)?))),
-        _ => panic!("unimplemented engine type!"),
-    }
-}
-
 fn main() -> Result<()> {
     init_logging();
+    info!("version {}", env!("CARGO_PKG_VERSION"));
+
+    let cli = Cli::parse();
+    info!("Engine: {:?}", cli.engine);
 
     let settings = Settings::new()?;
 
-    let cli = Cli::parse();
-
-    let engine = open_engine(&settings.storage_path, cli.engine)?;
-
-    info!("version {}", env!("CARGO_PKG_VERSION"));
-    info!("Engine: {:?}", cli.engine);
-
-    let listener = TcpListener::bind(cli.addr)?;
-
+    let thread_pool = ChannelThreadPool::new(8)?;
+    let server = KvServer::new(cli.addr, settings.storage_path, cli.engine, thread_pool)?;
     info!("Listening on {}", cli.addr);
-
-    for stream in listener.incoming() {
-        handle_connection(stream?, &engine)?;
-    }
+    server.run()?;
 
     Ok(())
 }
@@ -147,51 +94,4 @@ impl Settings {
 
         Ok(config.try_deserialize()?)
     }
-}
-
-fn handle_connection(mut stream: TcpStream, engine: &RefCell<Box<dyn KvEngine>>) -> Result<()> {
-    let mut len_bytes = [0u8; 4];
-    stream.read_exact(&mut len_bytes)?;
-    let len = u32::from_be_bytes(len_bytes) as usize;
-
-    // Vec w/ len and capacity of `len`.
-    let mut data = vec![0u8; len];
-    stream.read_exact(&mut data)?;
-
-    let (command, _): (KvCommand, usize) = bincode::serde::decode_from_slice(&data, standard())?;
-
-    // Process command and create response
-    let response = match command {
-        KvCommand::Get { key } => {
-            let mut engine = engine.borrow_mut();
-            match engine.get(key) {
-                Ok(value) => KvResponse::Ok(value),
-                Err(e) => KvResponse::Err(e.to_string()),
-            }
-        }
-        KvCommand::Set { key, value } => {
-            let mut engine = engine.borrow_mut();
-            match engine.set(key, value) {
-                Ok(()) => KvResponse::Ok(None),
-                Err(e) => KvResponse::Err(e.to_string()),
-            }
-        }
-        KvCommand::Rm { key } => {
-            let mut engine = engine.borrow_mut();
-            match engine.rm(key) {
-                Ok(()) => KvResponse::Ok(None),
-                Err(e) => KvResponse::Err(e.to_string()),
-            }
-        }
-    };
-
-    // Serialize and send response back to client
-    let response_bytes = bincode::serde::encode_to_vec(&response, standard())?;
-    let response_len = response_bytes.len() as u32;
-
-    stream.write_all(&response_len.to_be_bytes())?;
-    stream.write_all(&response_bytes)?;
-    stream.flush()?;
-
-    Ok(())
 }

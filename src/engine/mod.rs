@@ -18,12 +18,12 @@ pub enum KvResponse {
     Err(String),
 }
 
-pub trait KvEngine {
-    fn get(&mut self, key: String) -> Result<Option<String>>;
+pub trait KvEngine: Clone + Send + 'static {
+    fn get(&self, key: String) -> Result<Option<String>>;
 
-    fn set(&mut self, key: String, value: String) -> Result<()>;
+    fn set(&self, key: String, value: String) -> Result<()>;
 
-    fn rm(&mut self, key: String) -> Result<()>;
+    fn rm(&self, key: String) -> Result<()>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -41,6 +41,47 @@ impl FromStr for EngineType {
             "kvs" | "kvstore" => Ok(EngineType::Kvs),
             "sled" | "sld" => Ok(EngineType::Sled),
             _ => Err(KvError::InvalidEngineName),
+        }
+    }
+}
+
+/// A wrapper enum that can hold any engine implementation.
+/// This allows dynamic dispatch while keeping the trait Clone-able.
+#[derive(Clone)]
+pub enum Engine {
+    Kvs(KvStore),
+    Sled(KvSled),
+}
+
+impl Engine {
+    /// Create an Engine from an EngineType and path
+    pub fn open(engine_type: EngineType, path: impl AsRef<std::path::Path>) -> Result<Self> {
+        match engine_type {
+            EngineType::Kvs => Ok(Engine::Kvs(KvStore::open(path.as_ref())?)),
+            EngineType::Sled => Ok(Engine::Sled(KvSled::open(path.as_ref())?)),
+        }
+    }
+}
+
+impl KvEngine for Engine {
+    fn get(&self, key: String) -> Result<Option<String>> {
+        match self {
+            Engine::Kvs(kvs) => kvs.get(key),
+            Engine::Sled(sled) => sled.get(key),
+        }
+    }
+
+    fn set(&self, key: String, value: String) -> Result<()> {
+        match self {
+            Engine::Kvs(kvs) => kvs.set(key, value),
+            Engine::Sled(sled) => sled.set(key, value),
+        }
+    }
+
+    fn rm(&self, key: String) -> Result<()> {
+        match self {
+            Engine::Kvs(kvs) => kvs.rm(key),
+            Engine::Sled(sled) => sled.rm(key),
         }
     }
 }

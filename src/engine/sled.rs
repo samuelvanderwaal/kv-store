@@ -5,6 +5,7 @@ use crate::{KvError, Result};
 
 use sled::{self, Db};
 
+#[derive(Clone)]
 pub struct KvSled(Db);
 
 impl KvSled {
@@ -16,7 +17,7 @@ impl KvSled {
 }
 
 impl KvEngine for KvSled {
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
         let value = self
             .0
             .get(key)?
@@ -27,13 +28,13 @@ impl KvEngine for KvSled {
         Ok(value)
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    fn set(&self, key: String, value: String) -> Result<()> {
         self.0.insert(key, value.into_bytes())?;
         self.0.flush()?;
         Ok(())
     }
 
-    fn rm(&mut self, key: String) -> Result<()> {
+    fn rm(&self, key: String) -> Result<()> {
         self.0.remove(key)?.ok_or(KvError::Remove)?;
         self.0.flush()?;
         Ok(())

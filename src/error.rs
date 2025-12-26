@@ -41,4 +41,14 @@ pub enum KvError {
     // Index
     #[error("failed to insert into index")]
     IndexInsertion,
+
+    // Concurrency
+    #[error("failed to lock mutex")]
+    PoisonedMutex,
+}
+
+impl<T> From<std::sync::PoisonError<T>> for KvError {
+    fn from(_: std::sync::PoisonError<T>) -> Self {
+        KvError::PoisonedMutex
+    }
 }

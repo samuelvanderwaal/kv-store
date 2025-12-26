@@ -165,7 +165,7 @@ fn cli_log_configuration() {
         .unwrap();
     thread::sleep(Duration::from_secs(1));
     child.kill().expect("server exited before killed");
-    child.wait().expect("server exited before killed");
+    child.wait().expect("failed to wait on child");
 
     let content = fs::read_to_string(&stderr_path).expect("unable to read from stderr file");
     assert!(content.contains(env!("CARGO_PKG_VERSION")));
@@ -188,10 +188,11 @@ fn cli_wrong_engine() {
             .unwrap();
         thread::sleep(Duration::from_secs(1));
         child.kill().expect("server exited before killed");
-        child.wait().expect("server exited before killed");
+        child.wait().expect("failed to wait on child");
 
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
         cmd.env("KVS_STORAGE_PATH", temp_dir.path())
+            .env("RUST_LOG", "off")
             .args(["--engine", "kvs", "--addr", "127.0.0.1:4003"])
             .current_dir(&temp_dir)
             .assert()
@@ -211,10 +212,11 @@ fn cli_wrong_engine() {
             .unwrap();
         thread::sleep(Duration::from_secs(1));
         child.kill().expect("server exited before killed");
-        child.wait().expect("server exited before killed");
+        child.wait().expect("failed to wait on child");
 
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
         cmd.env("KVS_STORAGE_PATH", temp_dir.path())
+            .env("RUST_LOG", "off")
             .args(["--engine", "sled", "--addr", "127.0.0.1:4003"])
             .current_dir(&temp_dir)
             .assert()
@@ -224,9 +226,7 @@ fn cli_wrong_engine() {
 
 fn cli_access_server(engine: &str, addr: &str) {
     let (sender, receiver) = mpsc::sync_channel(0);
-
     let temp_dir = TempDir::new().unwrap();
-
     let mut server = Command::cargo_bin("kvs-server").unwrap();
     let mut child = server
         .env("KVS_STORAGE_PATH", temp_dir.path())
@@ -238,7 +238,7 @@ fn cli_access_server(engine: &str, addr: &str) {
     let handle = thread::spawn(move || {
         let _ = receiver.recv(); // wait for main thread to finish
         child.kill().expect("server exited before killed");
-        child.wait().expect("server exited before killed");
+        child.wait().expect("failed to wait on child");
     });
     thread::sleep(Duration::from_secs(1));
 
@@ -322,7 +322,7 @@ fn cli_access_server(engine: &str, addr: &str) {
     let handle = thread::spawn(move || {
         let _ = receiver.recv(); // wait for main thread to finish
         child.kill().expect("server exited before killed");
-        child.wait().expect("server exited before killed");
+        child.wait().expect("failed to wait on child");
     });
     thread::sleep(Duration::from_secs(1));
 

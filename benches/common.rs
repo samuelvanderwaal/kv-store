@@ -1,7 +1,8 @@
 use criterion::Criterion;
 use std::time::Duration;
 
-use kvs::{KvEngine, KvSled, KvStore};
+#[allow(unused_imports)]
+pub use kvs::{Engine, EngineType, KvEngine};
 
 /// Shared benchmark configuration for I/O-heavy operations
 ///
@@ -9,6 +10,7 @@ use kvs::{KvEngine, KvSled, KvStore};
 /// - High variance due to OS scheduling, file system caching, etc.
 /// - Need for longer warm-up to stabilize I/O patterns
 /// - Higher noise thresholds due to inherent I/O variability
+#[allow(dead_code)]
 pub fn io_benchmark_config() -> Criterion {
     Criterion::default()
         .sample_size(1000) // More samples for better statistics
@@ -21,10 +23,11 @@ pub fn io_benchmark_config() -> Criterion {
 ///
 /// Supports "kvs" and "sled" engines. This helper function allows
 /// benchmarks to be parameterized across different storage backends.
-pub fn create_engine(engine_name: &str, path: &std::path::Path) -> Box<dyn KvEngine> {
+#[allow(dead_code)]
+pub fn create_engine(engine_name: &str, path: &std::path::Path) -> Engine {
     match engine_name {
-        "kvs" => Box::new(KvStore::open(path).unwrap()),
-        "sled" => Box::new(KvSled::open(path).unwrap()),
+        "kvs" => Engine::open(EngineType::Kvs, path).unwrap(),
+        "sled" => Engine::open(EngineType::Sled, path).unwrap(),
         _ => panic!("Unknown engine: {}", engine_name),
     }
 }
